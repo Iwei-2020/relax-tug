@@ -36,8 +36,8 @@
  * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）
  *
  * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。
- * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）与 §5.1（广告频次上限）。
- * PALETTE（配色）属渲染专用，不进本镜像。
+ * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）与 §5.1（广告频次上限）。
+ * PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。
  */
 module.exports = {
   "WIN_NET_ENERGY": 80,
@@ -94,6 +94,8 @@ module.exports = {
     }
   },
   "DEFAULT_DIFFICULTY": "normal",
+  "EVENT_MAX_ENERGY_SCALE": 1.5,
+  "EVENT_MAX_PER_MATCH": 2,
   "MONETIZATION": {
     "revivePerMatch": 1,
     "rewardDoublePerDay": 3,
@@ -275,6 +277,8 @@ const {
   DISPLACEMENT_MAX_PX,
   GAME_HARD_LIMIT_MS,
   DIFFICULTY,
+  EVENT_MAX_ENERGY_SCALE,
+  EVENT_MAX_PER_MATCH,
   MONETIZATION,
 } = __req('server/lib/constants.js');
 const { CODES, ok, fail } = __req('server/lib/envelope.js');
@@ -323,9 +327,19 @@ function validate(payload) {
     else if (isInt(p.hits) && p.perfectHits > p.hits) errors.push('perfectHits 超过 hits');
   }
   if (p.challengeMode !== undefined && typeof p.challengeMode !== 'boolean') errors.push('challengeMode 非法');
+  // 随机事件触发次数（§6.5）：可选字段，出现时只做存在性/上界校验。
+  if (p.eventsFired !== undefined) {
+    if (!isInt(p.eventsFired) || p.eventsFired < 0) errors.push('eventsFired 非法');
+    else if (p.eventsFired > EVENT_MAX_PER_MATCH) errors.push('eventsFired 超过每局上限');
+  }
 
-  // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率
-  if (isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) {
+  // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率，
+  // 随机事件「手速狂潮」（§6.5）能量倍率再乘一次 —— 三档倍率都必须计入，否则合法上报会被误判为篡改。
+  if (
+    isInt(p.hits) &&
+    isInt(p.myEnergy) &&
+    p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER * EVENT_MAX_ENERGY_SCALE
+  ) {
     errors.push('myEnergy 超过理论上限');
   }
 
@@ -407,6 +421,7 @@ async function recordResult(store, openid, payload, nowMs) {
     rounds: payload.rounds,
     hits: payload.hits,
     perfectHits: isInt(payload.perfectHits) ? payload.perfectHits : 0, // 完美判定段数（§6.2）
+    eventsFired: isInt(payload.eventsFired) ? payload.eventsFired : 0, // 随机事件触发次数（§6.5）
     misses: payload.misses,
     timeouts: payload.timeouts,
     bestCombo: payload.bestCombo,

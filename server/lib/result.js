@@ -21,6 +21,8 @@ const {
   DISPLACEMENT_MAX_PX,
   GAME_HARD_LIMIT_MS,
   DIFFICULTY,
+  EVENT_MAX_ENERGY_SCALE,
+  EVENT_MAX_PER_MATCH,
   MONETIZATION,
 } = require('./constants.js');
 const { CODES, ok, fail } = require('./envelope.js');
@@ -69,9 +71,19 @@ function validate(payload) {
     else if (isInt(p.hits) && p.perfectHits > p.hits) errors.push('perfectHits 超过 hits');
   }
   if (p.challengeMode !== undefined && typeof p.challengeMode !== 'boolean') errors.push('challengeMode 非法');
+  // 随机事件触发次数（§6.5）：可选字段，出现时只做存在性/上界校验。
+  if (p.eventsFired !== undefined) {
+    if (!isInt(p.eventsFired) || p.eventsFired < 0) errors.push('eventsFired 非法');
+    else if (p.eventsFired > EVENT_MAX_PER_MATCH) errors.push('eventsFired 超过每局上限');
+  }
 
-  // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率
-  if (isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) {
+  // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率，
+  // 随机事件「手速狂潮」（§6.5）能量倍率再乘一次 —— 三档倍率都必须计入，否则合法上报会被误判为篡改。
+  if (
+    isInt(p.hits) &&
+    isInt(p.myEnergy) &&
+    p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER * EVENT_MAX_ENERGY_SCALE
+  ) {
     errors.push('myEnergy 超过理论上限');
   }
 
@@ -153,6 +165,7 @@ async function recordResult(store, openid, payload, nowMs) {
     rounds: payload.rounds,
     hits: payload.hits,
     perfectHits: isInt(payload.perfectHits) ? payload.perfectHits : 0, // 完美判定段数（§6.2）
+    eventsFired: isInt(payload.eventsFired) ? payload.eventsFired : 0, // 随机事件触发次数（§6.5）
     misses: payload.misses,
     timeouts: payload.timeouts,
     bestCombo: payload.bestCombo,

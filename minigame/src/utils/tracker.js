@@ -30,6 +30,7 @@ const EVENTS = {
   ROUND_MISS: 'round_miss',
   ROUND_TIMEOUT: 'round_timeout',
   MATCH_END: 'match_end', // 含 result / durationMs / accuracy
+  RANDOM_EVENT: 'random_event', // 随机事件触发（§6.5：id / 轮次）
   REVIVE_CLICK: 'revive_click',
   AD_WATCH: 'ad_watch',
   AD_FAIL: 'ad_fail',
@@ -37,6 +38,7 @@ const EVENTS = {
   SHARE_CLICK: 'share_click',
   SHARE_SUCCESS: 'share_success',
   SHARE_FAIL: 'share_fail',
+  SHARE_CARD_SHOWN: 'share_card_shown', // 分享卡预览页展示（§4.5）
 };
 
 /**

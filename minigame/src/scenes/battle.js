@@ -12,6 +12,7 @@
 
 const { MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
+const { roundRect } = require('../components/shape.js');
 const { drawRope, drawCountdown } = require('../components/rope.js');
 const { drawTarget, drawPalette, hitTest } = require('../components/palette.js');
 const { createRng } = require('../core/rng.js');
@@ -23,6 +24,7 @@ const {
   isOver,
   summary,
 } = require('../core/battle.js');
+const { activeEvent } = require('../core/events.js');
 const { ROUND_GAP_MS, GAME_HARD_LIMIT_MS } = require('../config/config.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 const ttApi = require('../platform/tt.js');
@@ -35,6 +37,8 @@ const FEEDBACK_MS = 260;
 const IMPULSE_MS = 380;
 /** 「完美判定」反馈持续时长（§7.1：金色描边 + "完美!" 提示） */
 const PERFECT_MS = 500;
+/** 随机事件触发时的横幅脉冲时长（§7.1：顶部弹出事件横幅 + 淡入缩放脉冲） */
+const EVENT_POP_MS = 700;
 
 /**
  * @param {object} options
@@ -68,6 +72,8 @@ function createBattleScene(options) {
   let feedbackLeftMs = 0;
   let comboPop = 0;
   let perfectLeftMs = 0; // 「完美判定」反馈剩余时长（§7.1）
+  let lastFired = match.events ? match.events.fired : 0; // 已播报的随机事件次数（§6.5）
+  let eventPopLeftMs = 0; // 随机事件横幅脉冲剩余时长
   // 拔河视图的动效状态：累计时间驱动待机律动，impulse 驱动命中/失误冲击
   let tMs = 0;
   let impulseLeftMs = 0;
@@ -87,6 +93,22 @@ function createBattleScene(options) {
   };
 
   track(EVENTS.MATCH_START, { difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
+
+  /**
+   * 轮间刷新：把「窗口重置 + 随机事件播报」合并到一处（§6.5 触发检查点在轮间）。
+   * 事件由 core 在 nextRound 内确定性触发，这里只负责表现层反馈（横幅脉冲 + 震动 + 埋点）。
+   */
+  function refreshRound() {
+    roundLeftMs = match.round ? match.round.windowMs : 0;
+    const fired = match.events ? match.events.fired : 0;
+    if (fired !== lastFired) {
+      lastFired = fired;
+      eventPopLeftMs = EVENT_POP_MS;
+      const ev = activeEvent(match.events);
+      ttApi.vibrateShort();
+      track(EVENTS.RANDOM_EVENT, { id: ev ? ev.id : '', round: match.roundIndex });
+    }
+  }
 
   /**
    * 结算序列中的**一段**：
@@ -141,6 +163,7 @@ function createBattleScene(options) {
       tMs += dt;
       if (impulseLeftMs > 0) impulseLeftMs = Math.max(0, impulseLeftMs - dt);
       if (perfectLeftMs > 0) perfectLeftMs = Math.max(0, perfectLeftMs - dt);
+      if (eventPopLeftMs > 0) eventPopLeftMs = Math.max(0, eventPopLeftMs - dt);
 
       if (feedbackLeftMs > 0) {
         feedbackLeftMs -= dt;
@@ -155,7 +178,7 @@ function createBattleScene(options) {
         match = advanceCountdown(match, dt);
         if (match.phase === 'playing') {
           match = nextRound(match, rand);
-          roundLeftMs = match.round.windowMs;
+          refreshRound();
           spentMs = 0;
         }
         return;
@@ -187,7 +210,7 @@ function createBattleScene(options) {
         spentMs += dt;
         if (gapLeftMs <= 0) {
           match = nextRound(match, rand);
-          roundLeftMs = match.round.windowMs;
+          refreshRound();
         }
         return;
       }
@@ -200,6 +223,7 @@ function createBattleScene(options) {
 
     draw(ctx) {
       const W = layout.width;
+      const ev = activeEvent(match.events); // 当前生效的随机事件（§6.5，无则 null）
 
       // 马卡龙天空打底（三分区面板叠在其上，与首页同一套观感）
       decor.drawSky(ctx, layout, cache, MACARON);
@@ -216,6 +240,37 @@ function createBattleScene(options) {
 
       drawRope(ctx, layout, ropeView);
 
+      // 随机事件横幅（§6.5 / §7.1）：生效期间常驻显示「事件名 · 效果 · 剩余秒数」，触发瞬间缩放脉冲
+      if (ev) {
+        const bh = 28;
+        const bw = Math.min(Math.round(W * 0.82), 320);
+        const by = Math.round(layout.rope.badge.y + layout.rope.badge.h / 2 + 10);
+        const pop = eventPopLeftMs > 0 ? eventPopLeftMs / EVENT_POP_MS : 0;
+        const sec = Math.max(1, Math.ceil(match.events.activeLeftMs / 1000));
+        const k = 1 + 0.06 * pop;
+        ctx.save();
+        ctx.translate(W / 2, by + bh / 2);
+        ctx.scale(k, k);
+        ctx.shadowColor = 'rgba(46,102,180,0.3)';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = 'rgba(255,255,255,0.74)';
+        roundRect(ctx, -bw / 2, -bh / 2, bw, bh, bh / 2);
+        ctx.fill();
+        ctx.shadowColor = 'rgba(0,0,0,0)';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.strokeStyle = MACARON.ring;
+        ctx.lineWidth = 3;
+        roundRect(ctx, -bw / 2 + 2, -bh / 2 + 2, bw - 4, bh - 4, bh / 2 - 2);
+        ctx.stroke();
+        decor.drawOutlinedText(ctx, `${ev.name} · ${ev.desc} · ${sec}s`, 0, 0, {
+          font: 'bold 13px sans-serif',
+          fill: MACARON.ink,
+        });
+        ctx.restore();
+      }
+
       drawTarget(ctx, layout, match.round, {
         roundRemaining: match.round && roundLeftMs > 0 ? roundLeftMs / match.round.windowMs : 0,
         combo: match.player.combo,
@@ -224,6 +279,17 @@ function createBattleScene(options) {
       });
 
       drawPalette(ctx, layout, match.round, { pressedIndex, hitIndex, missIndex });
+
+      // 随机事件「迷雾干扰」（§6.5）：纯视觉遮挡，不改任何数值；覆盖在候选面板之上
+      if (ev && ev.fog) {
+        const b = layout.bottom;
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = '#DEF0FA';
+        roundRect(ctx, b.x + 6, b.y + 4, b.w - 12, b.h - 4, 16);
+        ctx.fill();
+        ctx.restore();
+      }
 
       // 分区细分隔线（§2.1：视觉上分区清晰但不断裂）
       ctx.strokeStyle = 'rgba(255,255,255,0.7)';
@@ -276,6 +342,8 @@ function createBattleScene(options) {
       missIndex = -1;
       impulseLeftMs = 0;
       perfectLeftMs = 0;
+      lastFired = 0;
+      eventPopLeftMs = 0;
       tMs = 0;
     },
   };

@@ -50,6 +50,8 @@ function mirrorOf(config) {
     BALANCE,
     DIFFICULTY,
     DEFAULT_DIFFICULTY,
+    EVENT_MAX_ENERGY_SCALE,
+    EVENT_MAX_PER_MATCH,
     MONETIZATION,
   } = config;
 
@@ -74,6 +76,8 @@ function mirrorOf(config) {
     BALANCE,
     DIFFICULTY,
     DEFAULT_DIFFICULTY,
+    EVENT_MAX_ENERGY_SCALE,
+    EVENT_MAX_PER_MATCH,
     MONETIZATION,
   };
 }
@@ -89,8 +93,8 @@ function render(mirror) {
     ' * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）',
     ' *',
     ' * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。',
-    ' * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）与 §5.1（广告频次上限）。',
-    ' * PALETTE（配色）属渲染专用，不进本镜像。',
+    ' * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）与 §5.1（广告频次上限）。',
+    ' * PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。',
     ' */',
     '',
   ];

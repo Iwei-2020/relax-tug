@@ -65,6 +65,27 @@ const CONFIG = {
   },
   defaultDifficulty: 'normal',
 
+  /* ── §6.5 随机事件（局内临时修饰，由种子驱动，不改胜负条件） ──────── */
+  // 硬性约束（§6.5）：事件只做「局内临时修饰」——能量倍率 / 输入窗口缩放 / 视觉遮挡；
+  // **绝不**改变越线净能量差（winNetEnergy）与平局带宽，保证竞技公平与数值口径稳定。
+  // 触发时机与具体事件全部由 createRng(seed) 决定（与回合序列共用同一随机流），
+  // 每日挑战局因此能做到「同日同难度全球同一套事件」，可复现、可回放。
+  events: {
+    enabled: true,
+    maxPerMatch: 2, // 每局触发上限（避免局局必刷）
+    firstCheckRound: 2, // 前 2 轮为热身，不打扰
+    checkEveryRounds: 2, // 之后每 2 轮检查一次
+    chance: 0.45, // 每次检查的触发概率（rng 驱动）
+    durationMs: 6000, // 单个事件持续时长（按真实时间衰减）
+    // 事件池：weight 为相对权重；效果字段仅允许 energyScale / windowScale / fog
+    pool: [
+      { id: 'frenzy', name: '手速狂潮', desc: '命中能量 ×1.5', weight: 3, energyScale: 1.5 },
+      { id: 'rush', name: '疾风时刻', desc: '输入窗口收窄 25%', weight: 3, windowScale: 0.75 },
+      { id: 'breather', name: '喘息时刻', desc: '输入窗口加宽 30%', weight: 2, windowScale: 1.3 },
+      { id: 'fog', name: '迷雾干扰', desc: '候选色块被薄雾遮挡', weight: 2, fog: true },
+    ],
+  },
+
   /* ── §5.1 激励广告频次上限（服务端记账校验，客户端只做入口控制） ── */
   monetization: {
     revivePerMatch: 1, // 失败复活：每局 1 次
@@ -91,6 +112,18 @@ const CONFIG = {
 
 /** 位移系数 = 位移上限 / 越线净能量差（§2.4 公式）。首版 = 220 / 80 = 2.75 px/能量点。 */
 const DISPLACEMENT_FACTOR = CONFIG.displacementMaxPx / CONFIG.winNetEnergy;
+
+/**
+ * 随机事件中的最高能量倍率（由事件池派生，避免手工维护第二处数字）。
+ * 用途：服务端能量上限校验需乘上它，否则「手速狂潮」局里的合法上报会被误判为篡改（§6.5）。
+ */
+const EVENT_MAX_ENERGY_SCALE = CONFIG.events.pool.reduce(
+  (max, ev) => Math.max(max, ev && ev.energyScale ? ev.energyScale : 1),
+  1
+);
+
+/** 每局随机事件触发上限（§6.5）：服务端校验 eventsFired 的上界。 */
+const EVENT_MAX_PER_MATCH = CONFIG.events.maxPerMatch;
 
 module.exports = {
   CONFIG,
@@ -119,6 +152,9 @@ module.exports = {
   BALANCE: CONFIG.balance,
   DIFFICULTY: CONFIG.difficulty,
   DEFAULT_DIFFICULTY: CONFIG.defaultDifficulty,
+  RANDOM_EVENTS: CONFIG.events,
+  EVENT_MAX_ENERGY_SCALE,
+  EVENT_MAX_PER_MATCH,
   MONETIZATION: CONFIG.monetization,
   PALETTE: CONFIG.palette,
 };

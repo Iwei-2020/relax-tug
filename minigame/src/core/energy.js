@@ -50,13 +50,15 @@ function comboBonus(comboAfterHit) {
  * @param {object} state 能量状态
  * @param {number} [jitter] 可选浮动系数（AI 对手的 ±10% 浮动，见 §6.4）；可缺省＝精确值
  * @param {boolean} [perfect] 是否「完美判定」：为 true 时该段能量 ×PERFECT_MULTIPLIER（§6.2）
+ * @param {number} [scale] 随机事件能量倍率（§6.5「手速狂潮」；缺省 = 1，仅作用于玩家侧）
  * @returns {object} 新状态
  */
-function applyHit(state, jitter, perfect) {
+function applyHit(state, jitter, perfect, scale) {
   const combo = state.combo + 1;
   const base = HIT_ENERGY + comboBonus(combo);
   const boosted = perfect ? Math.round(base * PERFECT_MULTIPLIER) : base;
-  const gain = jitter === undefined ? boosted : Math.max(1, Math.round(boosted * jitter));
+  const scaled = scale === undefined || scale === 1 ? boosted : Math.max(1, Math.round(boosted * scale));
+  const gain = jitter === undefined ? scaled : Math.max(1, Math.round(scaled * jitter));
   return {
     ...state,
     energy: state.energy + gain,

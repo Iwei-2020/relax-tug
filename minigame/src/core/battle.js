@@ -20,6 +20,7 @@ const {
 const { createEnergyState, applyHit, applyMiss, applyTimeout, displacement, finalResult } = require('./energy.js');
 const { createRound, currentTargetId, judgeGrade } = require('./matcher.js');
 const { createGhost, stepGhost } = require('./ghost.js');
+const { createEventState, activeEvent, tick: tickEvent, maybeTrigger } = require('./events.js');
 
 /**
  * 创建一局（未开始，处于倒计时阶段）。
@@ -40,6 +41,7 @@ function createMatch(options) {
     round: null,
     player: createEnergyState(),
     ghost: createGhost(difficulty),
+    events: createEventState(), // §6.5 随机事件状态（种子驱动，附在 match 上便于快照/上报）
     result: null,
     lastRound: null,
     px: 0,
@@ -72,7 +74,12 @@ function beginPlaying(match) {
 function nextRound(match, rand) {
   if (match.phase !== 'playing') return match;
   if (match.round && !match.round.done) return match;
-  return { ...match, round: createRound(match.difficulty, rand), roundElapsedMs: 0 };
+  // §6.5 随机事件：检查点在轮间刷新（每轮结束后的停顿内），玩家体感为「下一轮开始冒出事件」。
+  // 触发完全由 rand 驱动 → 同种子同事件序列，每日挑战「同日同题」口径成立。
+  const events = maybeTrigger(match.events, match.roundIndex, rand);
+  const ev = activeEvent(events);
+  const round = createRound(match.difficulty, rand, ev ? ev.windowScale : undefined);
+  return { ...match, events, round, roundElapsedMs: 0 };
 }
 
 /**
@@ -98,7 +105,12 @@ function submit(match, clickedId, dtMs, rand) {
   const segMs = Math.max(0, dtMs || 0);
   const elapsedMs = match.elapsedMs + segMs;
 
-  // 我方本段：命中吃连击加成（+ 判定分档倍率），点错扣分并清零连击，超时（空段）不增不减
+  // §6.5 随机事件：按真实时间衰减（到期自动失效，恢复常态），并取出本次生效的能量倍率
+  const events = tickEvent(match.events, segMs);
+  const active = activeEvent(events);
+  const energyScale = active && active.energyScale ? active.energyScale : 1;
+
+  // 我方本段：命中吃连击加成（+ 判定分档倍率 + 事件能量倍率），点错扣分并清零连击，超时（空段）不增不减
   const timedOut = clickedId === null || clickedId === undefined;
   const grade = timedOut ? 'miss' : judgeGrade(targetId, clickedId, segMs, match.round.windowMs);
   const correct = grade !== 'miss';
@@ -106,7 +118,7 @@ function submit(match, clickedId, dtMs, rand) {
   const player = timedOut
     ? applyTimeout(match.player)
     : correct
-      ? applyHit(match.player, undefined, perfect)
+      ? applyHit(match.player, undefined, perfect, energyScale)
       : applyMiss(match.player);
 
   // 对手也按「段」推进：与玩家逐段对称，序列化改动才不会打破 §6.4 的能量平衡口径
@@ -129,6 +141,7 @@ function submit(match, clickedId, dtMs, rand) {
 
   return {
     ...match,
+    events, // §6.5 随机事件状态（tick 后的新对象）
     player,
     ghost,
     elapsedMs,
@@ -170,10 +183,12 @@ function shouldFallbackToAI(match, waitedMs) {
  * 结算摘要（供结算页展示 §4.3 数据面板，以及上报服务端 reportResult）。
  * 命中率以「命中 / (命中 + 失误 + 空轮)」计，无操作时记 0。
  * perfectHits：其中「完美判定」的段数（§6.2 判定分档）；challengeMode：每日挑战局标记（§4.4）。
+ * eventsFired / eventIds：本局随机事件的触发次数与序列（§6.5），供服务端上界校验与后续分析。
  */
 function summary(match) {
   const p = match.player;
   const total = p.hits + p.misses + p.timeouts;
+  const ev = match.events || {};
   return {
     result: match.result,
     difficulty: match.difficulty,
@@ -190,6 +205,8 @@ function summary(match) {
     oppEnergy: match.ghost.state.energy,
     netEnergy: p.energy - match.ghost.state.energy,
     displacementPx: match.px,
+    eventsFired: ev.fired || 0,
+    eventIds: ev.firedIds ? ev.firedIds.slice() : [],
   };
 }
 

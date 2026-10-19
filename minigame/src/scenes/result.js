@@ -18,7 +18,9 @@
 
 const { HOME, MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
+const { roundRect } = require('../components/shape.js');
 const { createRng } = require('../core/rng.js');
+const { findEvent } = require('../core/events.js');
 const { AD_UNITS, showRewardedVideo } = require('../platform/ad.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 
@@ -186,6 +188,20 @@ function createResultScene(options) {
   const titleColors = isWin ? MACARON.resultWin : summary.result === 'draw' ? MACARON.resultDraw : MACARON.resultLose;
   const subText = isLose ? almostText(summary) : summary.result === 'draw' ? '势均力敌，再来一局决胜' : '漂亮，保持这个手感';
 
+  // 随机事件标记（§6.5）：本局触发过则展示金色胶囊（次数 + 事件名序列）。
+  // 文本在场景创建时算一次，避免帧内新建字符串/数组（§5.4）。
+  const eventIds = Array.isArray(summary.eventIds) ? summary.eventIds : [];
+  const eventNames = eventIds
+    .map((id) => {
+      const ev = findEvent(id);
+      return ev ? ev.name : '';
+    })
+    .filter(Boolean);
+  const eventLabel =
+    (summary.eventsFired || 0) > 0 && eventNames.length > 0
+      ? `随机事件 ×${summary.eventsFired} · ${eventNames.join(' / ')}`
+      : '';
+
   let reviveUsed = false;
   let pressed = null;
   let hintText = '';
@@ -274,6 +290,25 @@ function createResultScene(options) {
         glowBlur: 8,
         glowOffsetY: 1,
       });
+
+      // 随机事件标记（§6.5）：本局触发过则以金色胶囊展示在数据面板上方
+      if (eventLabel) {
+        const bh = 26;
+        const bw = Math.min(Math.round(L.W * 0.82), 300);
+        const bx = L.cx - bw / 2;
+        const by = Math.round(L.subY + L.subFont * 0.9);
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        roundRect(ctx, bx, by, bw, bh, bh / 2);
+        ctx.fill();
+        ctx.strokeStyle = HOME.gold;
+        ctx.lineWidth = 3;
+        roundRect(ctx, bx + 2, by + 2, bw - 4, bh - 4, bh / 2 - 2);
+        ctx.stroke();
+        decor.drawOutlinedText(ctx, eventLabel, L.cx, by + bh / 2, {
+          font: 'bold 13px sans-serif',
+          fill: MACARON.ink,
+        });
+      }
 
       // 数据面板（§4.3）
       const rows = [
