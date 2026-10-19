@@ -10,7 +10,8 @@
  * 触摸：底部候选面板首次点击即结算本轮；命中/失误反馈由 core 返回的 lastRound 驱动。
  */
 
-const { COLORS } = require('../components/theme.js');
+const { MACARON } = require('../components/theme.js');
+const decor = require('../components/decor.js');
 const { drawRope } = require('../components/rope.js');
 const { drawTarget, drawPalette, hitTest } = require('../components/palette.js');
 const { createRng } = require('../core/rng.js');
@@ -61,6 +62,7 @@ function createBattleScene(options) {
   let missIndex = -1;
   let feedbackLeftMs = 0;
   let comboPop = 0;
+  const cache = {}; // 天空渐变缓存（只建一次）
 
   track(EVENTS.MATCH_START, { difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
 
@@ -155,6 +157,11 @@ function createBattleScene(options) {
     },
 
     draw(ctx) {
+      const W = layout.width;
+
+      // 马卡龙天空打底（三分区面板叠在其上，与首页同一套观感）
+      decor.drawSky(ctx, layout, cache, MACARON);
+
       drawRope(ctx, layout, {
         px: match.px,
         myEnergy: match.player.energy,
@@ -171,13 +178,23 @@ function createBattleScene(options) {
 
       drawPalette(ctx, layout, match.round, { pressedIndex, hitIndex, missIndex });
 
+      // 分区细分隔线（§2.1：视觉上分区清晰但不断裂）
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 2;
+      for (const y of [layout.mid.y, layout.bottom.y]) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+
       // 剩余对局时间（硬上限 §6.3）
       const leftSec = Math.max(0, Math.ceil((GAME_HARD_LIMIT_MS - match.elapsedMs) / 1000));
-      ctx.fillStyle = COLORS.textDim;
-      ctx.font = '14px sans-serif';
+      ctx.fillStyle = MACARON.inkDim;
+      ctx.font = 'bold 15px sans-serif';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
-      ctx.fillText(`${leftSec}s`, layout.width - 24, layout.rope.barY + 26);
+      ctx.fillText(`${leftSec}s`, W - 24, layout.rope.barY + 26);
     },
 
     onTouchStart(x, y) {

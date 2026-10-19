@@ -10,21 +10,111 @@
  * 目标分辨率基准：750×1334（§3.4），运行期按真机尺寸自适应。
  */
 
-/** 主题色（§3.4：我方暖色 / 对方冷色，中性背景深灰蓝）。 */
-const COLORS = {
-  bg: '#0F1724',
-  bgTop: '#13203A',
-  ground: '#1B2A44',
-  line: '#2B3D5C',
-  text: '#EDF2FA',
-  textDim: '#8FA3C0',
-  our: '#FF6B35',
-  opp: '#2FA8E1',
-  win: '#4CD964',
-  lose: '#FF4D4F',
-  warn: '#FFC53D',
-  knot: '#FFE8A3',
-  white: '#FFFFFF',
+/**
+ * 首页配色（对齐视觉稿：亮蓝天空 + 暖色高光 CTA + 彩色糖果点缀）。
+ *
+ * 与下方 MACARON 的分工：HOME 是「引流封面」，天空更深更艳，负责第一眼点击欲；
+ * MACARON 是「对局 / 结算」的浅色版本，天空更淡、面板更透，承托玩法内容。
+ * 两者同属一套糖果语言（同一批点缀色、同款绳圈与按钮原语），不要引入第三套色板。
+ */
+const HOME = {
+  skyTop: '#5468F0',
+  skyMid: '#4E96EE',
+  skyLow: '#8CCBF7',
+  skyBottom: '#D6EEFC',
+  cloud: '#FFFFFF',
+
+  // 标题：暖色渐变 + 白色粗描边 + 橙色外发光
+  titleTop: '#FFE066',
+  titleBottom: '#FF6E3C',
+  titleOutline: '#FFFFFF',
+  titleGlow: 'rgba(255,110,60,0.55)',
+  subtitle: '#FFFFFF',
+
+  // 磨砂玻璃卡片
+  card: 'rgba(255,255,255,0.22)',
+  cardBorder: 'rgba(255,255,255,0.62)',
+  cardGlow: 'rgba(31,90,180,0.28)',
+
+  // 主 CTA：粉 → 橙 → 琥珀，外套金色绳圈（呼应拔河绳）
+  ctaFrom: '#FF6FB5',
+  ctaMid: '#FF9E4A',
+  ctaTo: '#FFD44F',
+  ctaBrink: '#FFFFFF',
+  ctaText: '#FFFFFF',
+  ctaTextGlow: 'rgba(196,74,16,0.45)',
+  ropeGold: '#F5B526',
+  ropeGoldLight: '#FFE066',
+  ropeWeave: 'rgba(206,132,18,0.55)',
+
+  // 次级按钮：薄荷 / 紫罗兰描边玻璃
+  mint: '#5CE1B0',
+  mintGlow: 'rgba(92,225,176,0.55)',
+  mintFill: 'rgba(255,255,255,0.38)',
+  violet: '#B98CFF',
+  violetGlow: 'rgba(185,140,255,0.55)',
+  violetFill: 'rgba(150,110,255,0.42)',
+  subText: '#FFFFFF',
+  subTextGlow: 'rgba(24,58,122,0.55)',
+
+  // 氛围点缀
+  star: '#FFD84D',
+  starGlow: 'rgba(255,216,77,0.85)',
+  confetti: ['#FF7BD5', '#FFD84D', '#63D6FF', '#7CE7B0', '#B98CFF', '#FF9E4A'],
+};
+
+/**
+ * 对局 / 结算页马卡龙配色（与首页 HOME 同一套糖果语言，统一观感）
+ *
+ * 与 HOME 的分工：HOME 是「引流封面」，用高饱和亮蓝天空营造点击欲；
+ * 对局 / 结算用**同色相的浅色版本**承托玩法内容 —— 天空更淡、面板更透，
+ * 保证 §3.2「目标色必须一眼可辨」不被背景干扰。
+ *
+ * 硬约束（§3.2 / §3.3）：玩法色块本身仍取 config.palette 的高饱和色，
+ * **不参与马卡龙化**，仅靠白色厚描边 + 柔和投影与浅底拉开层次。
+ */
+const MACARON = {
+  // 天空（对局页全屏底）
+  skyTop: '#6FB4F2',
+  skyMid: '#A6DCF7',
+  skyLow: '#D8F0FD',
+  skyBottom: '#F4FBFF',
+
+  // 磨砂玻璃面板（三分区共用）
+  panel: 'rgba(255,255,255,0.34)',
+  panelStrong: 'rgba(255,255,255,0.5)',
+  panelBorder: 'rgba(255,255,255,0.8)',
+  panelGlow: 'rgba(46,102,180,0.22)',
+
+  // 赛道（顶部地面质感）
+  trackTop: '#B9ECD5',
+  trackBottom: '#8EDFBE',
+  trackLine: 'rgba(255,255,255,0.6)',
+
+  // 阵营：我方暖（草莓）／对方冷（蓝莓）
+  our: '#FF7BA9',
+  ourDeep: '#F2517F',
+  opp: '#61C2F2',
+  oppDeep: '#2F9FDC',
+
+  // 文字（浅底用深墨色，替代对局旧版的近白文字）
+  ink: '#3A4A6B',
+  inkDim: '#6E82A6',
+
+  // 语义色
+  win: '#3FD0A0',
+  lose: '#FF7A8A',
+  warn: '#FFB43D',
+  knot: '#FFE066',
+
+  // 判定线
+  judge: 'rgba(255,255,255,0.9)',
+  judgeHot: '#FFB43D',
+
+  // 结果色（结算页标题渐变两端，§4.3「配阵营色高亮」）
+  resultWin: ['#FF9DBE', '#F2517F'], // 胜利 → 我方阵营色（草莓粉）
+  resultLose: ['#8FD6F8', '#2F9FDC'], // 失败 → 对方阵营色（蓝莓蓝）
+  resultDraw: ['#FFD84D', '#F5921F'], // 平局 → 中性金（不代表任何一方）
 };
 
 /** 分区比例（§2.1）。 */
@@ -127,4 +217,4 @@ function computeLayout(sysInfo) {
   };
 }
 
-module.exports = { COLORS, SPLIT, MIN_TOUCH, GAP, paletteGrid, computeLayout };
+module.exports = { HOME, MACARON, SPLIT, MIN_TOUCH, GAP, paletteGrid, computeLayout };

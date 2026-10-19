@@ -3,24 +3,37 @@
 /**
  * 中部目标区 + 底部候选面板渲染（《项目说明书》§3.2 / §3.3 / §7.1 点击四态反馈）
  *
+ * 风格：马卡龙（与首页统一）—— 两个分区都是磨砂玻璃面板叠在天空之上；
+ * 玩法色块本身仍是 config.palette 的高饱和色（**不做马卡龙化**），
+ * 只用白色厚描边 + 柔和投影与浅底拉开层次，保证 §3.2「目标色一眼可辨」。
+ *
  * 中部：单个大色块居中（尺寸 ≥160px、圆角 16~24px），环形倒计时由绿渐变到红，上方显示连击。
  * 底部：候选色网格（4 / 6 / 9 格，受难度控制）；交互态四态 —— 默认 / 按下 / 命中正确 / 命中错误。
  */
 
-const { COLORS, paletteGrid } = require('./theme.js');
+const { MACARON, paletteGrid } = require('./theme.js');
 const { hexOf } = require('../core/colors.js');
-const { roundRect } = require('./rope.js');
+const { roundRect } = require('./shape.js');
+const { drawOutlinedText } = require('./decor.js');
+
+/** 色块通用投影（浅底上靠柔和灰蓝投影托起）。 */
+function chipShadow(ctx, blur, offsetY) {
+  ctx.shadowColor = 'rgba(58,74,107,0.28)';
+  ctx.shadowBlur = blur;
+  ctx.shadowOffsetY = offsetY;
+}
 
 /** 绘制中部目标区。 */
 function drawTarget(ctx, layout, round, view) {
   const v = view || {};
   const t = layout.target;
 
-  ctx.fillStyle = COLORS.bg;
+  // 中部玻璃面板
+  ctx.fillStyle = MACARON.panel;
   ctx.fillRect(layout.mid.x, layout.mid.y, layout.mid.w, layout.mid.h);
 
-  ctx.fillStyle = COLORS.textDim;
-  ctx.font = '16px sans-serif';
+  ctx.fillStyle = MACARON.inkDim;
+  ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText('目标颜色', t.cx, layout.mid.y + 16);
@@ -29,63 +42,74 @@ function drawTarget(ctx, layout, round, view) {
   const x = t.cx - size / 2;
   const y = t.cy - size / 2;
 
-  // 目标色块（带内阴影与描边）
+  // 目标色块：高饱和填充 + 白色厚描边 + 顶部玻璃高光
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 18;
-  ctx.shadowOffsetY = 6;
-  ctx.fillStyle = round ? hexOf(round.targetId) : '#556070';
+  chipShadow(ctx, 20, 8);
+  ctx.fillStyle = round ? hexOf(round.targetId) : '#8FA3C0';
   roundRect(ctx, x, y, size, size, t.radius);
   ctx.fill();
   ctx.restore();
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  ctx.lineWidth = 2;
+  ctx.save();
   roundRect(ctx, x, y, size, size, t.radius);
+  ctx.clip();
+  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = '#FFFFFF';
+  roundRect(ctx, x + size * 0.08, y + size * 0.06, size * 0.84, size * 0.34, t.radius * 0.7);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 4;
+  roundRect(ctx, x + 2, y + 2, size - 4, size - 4, t.radius);
   ctx.stroke();
 
   // 环形倒计时（剩余比例 1 → 0，颜色由绿渐变到红）
   const remaining = v.roundRemaining === undefined ? 1 : Math.max(0, Math.min(1, v.roundRemaining));
   const ringR = size / 2 + 22;
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
   ctx.beginPath();
   ctx.arc(t.cx, t.cy, ringR, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = remaining > 0.5 ? COLORS.win : remaining > 0.25 ? COLORS.warn : COLORS.lose;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = remaining > 0.5 ? MACARON.win : remaining > 0.25 ? MACARON.warn : MACARON.lose;
   ctx.beginPath();
   ctx.arc(t.cx, t.cy, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * remaining);
   ctx.stroke();
 
   // 连击提示（命中时数字弹跳放大由渲染层按 comboPop 缩放）
   if (v.combo > 0) {
-    const pop = 1 + Math.max(0, Math.min(0.6, (v.comboPop || 0)));
+    const pop = 1 + Math.max(0, Math.min(0.6, v.comboPop || 0));
     ctx.save();
-    ctx.translate(t.cx, y - 34);
+    ctx.translate(t.cx, y - 36);
     ctx.scale(pop, pop);
-    ctx.fillStyle = COLORS.warn;
-    ctx.font = 'bold 26px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`连击 ×${v.combo}`, 0, 0);
+    drawOutlinedText(ctx, `连击 ×${v.combo}`, 0, 0, {
+      font: 'bold 26px sans-serif',
+      fill: MACARON.warn,
+      outline: '#FFFFFF',
+      outlineWidth: 6,
+      glow: 'rgba(255,180,61,0.4)',
+      glowBlur: 10,
+    });
     ctx.restore();
   }
 
-  ctx.fillStyle = COLORS.textDim;
+  ctx.fillStyle = MACARON.inkDim;
   ctx.font = '15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('点下方同色块', t.cx, t.cy + ringR + 10);
+  ctx.fillText('点下方同色块', t.cx, t.cy + ringR + 12);
 }
 
 /**
  * 绘制底部候选面板。
- * @param {object} view { pressedIndex, hitIndex, missIndex, feedbackTtl }
+ * @param {object} view { pressedIndex, hitIndex, missIndex }
  */
 function drawPalette(ctx, layout, round, view) {
   const v = view || {};
-  ctx.fillStyle = COLORS.bg;
+  ctx.fillStyle = MACARON.panelStrong;
   ctx.fillRect(layout.bottom.x, layout.bottom.y, layout.bottom.w, layout.bottom.h);
 
   if (!round) return;
@@ -104,18 +128,44 @@ function drawPalette(ctx, layout, round, view) {
     const h = rc.h * scale;
     const x = rc.x + (rc.w - w) / 2;
     const y = rc.y + (rc.h - h) / 2;
+    const radius = 16;
 
-    ctx.globalAlpha = miss ? 0.55 : 1;
+    ctx.save();
+    if (hit) {
+      ctx.shadowColor = MACARON.win;
+      ctx.shadowBlur = 22;
+    } else if (miss) {
+      ctx.shadowColor = MACARON.lose;
+      ctx.shadowBlur = 18;
+    } else {
+      chipShadow(ctx, 12, 5);
+    }
+    ctx.globalAlpha = miss ? 0.5 : 1;
     ctx.fillStyle = hexOf(id);
-    roundRect(ctx, x, y, w, h, 14);
+    roundRect(ctx, x, y, w, h, radius);
     ctx.fill();
+    ctx.restore();
 
-    // 命中正确：绿色描边爆闪；命中错误：红色描边
-    ctx.lineWidth = hit || miss ? 5 : 2;
-    ctx.strokeStyle = hit ? COLORS.win : miss ? COLORS.lose : 'rgba(255,255,255,0.18)';
-    roundRect(ctx, x, y, w, h, 14);
+    // 顶部玻璃高光（与按钮同语言）
+    if (!miss) {
+      ctx.save();
+      roundRect(ctx, x, y, w, h, radius);
+      ctx.clip();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = '#FFFFFF';
+      roundRect(ctx, x + w * 0.08, y + h * 0.06, w * 0.84, h * 0.32, radius * 0.7);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 命中正确：白描边加粗 + 绿色爆闪；命中错误：白描边 + 红色
+    ctx.save();
+    ctx.globalAlpha = miss ? 0.6 : 1;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = hit || miss ? 5 : 3;
+    roundRect(ctx, x + 1.5, y + 1.5, w - 3, h - 3, radius - 1.5);
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 }
 

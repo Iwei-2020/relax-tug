@@ -5,55 +5,46 @@
  *
  * 视觉元素：拔河绳 + 双方小人 + 拉扯进度（绳结位置 = 位移）+ 判定线 + 能量对比条。
  *
+ * 风格：马卡龙（与首页统一）—— 天空由场景层铺底，本模块只负责在顶部叠加玻璃面板、
+ * 薄荷赛道、金色拔河绳与糖果色小人；阵营色由「赛道左右染色 + 小人 + 能量条」承载。
+ *
  * 手感要求（§3.1）：绳结位移必须**跟手且平滑**（线性映射，禁止 >100ms 阻尼延迟）；
- * 我方即将越线时判定线脉冲发光，对手即将越线时全屏轻微红色边缘警示。
+ * 我方即将越线时判定线脉冲发光，对手即将越线时全屏轻微警示。
  */
 
-const { COLORS } = require('./theme.js');
+const { MACARON } = require('./theme.js');
+const { roundRect } = require('./shape.js');
+const { drawOutlinedText } = require('./decor.js');
 
-/** 圆角矩形路径（低版本 canvas 无 roundRect，统一自绘）。 */
-function roundRect(ctx, x, y, w, h, r) {
-  const radius = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.arcTo(x + w, y, x + w, y + radius, radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.arcTo(x + w, y + h, x + w - radius, y + h, radius);
-  ctx.lineTo(x + radius, y + h);
-  ctx.arcTo(x, y + h, x, y + h - radius, radius);
-  ctx.lineTo(x, y + radius);
-  ctx.arcTo(x, y, x + radius, y, radius);
-  ctx.closePath();
-}
-
-/** 能量对比条（我方左、对方右）。 */
+/** 能量对比条（我方左、对方右；糖果色胶囊 + 白描边）。 */
 function drawEnergyBars(ctx, layout, myEnergy, oppEnergy) {
   const r = layout.rope;
   const max = Math.max(1, myEnergy, oppEnergy);
-  const myW = Math.max(4, Math.round((myEnergy / max) * r.barW));
-  const oppW = Math.max(4, Math.round((oppEnergy / max) * r.barW));
+  const myW = Math.max(r.barH, Math.round((myEnergy / max) * r.barW));
+  const oppW = Math.max(r.barH, Math.round((oppEnergy / max) * r.barW));
+  const leftX = 24;
+  const rightX = layout.width - 24 - r.barW;
 
-  ctx.fillStyle = COLORS.line;
-  roundRect(ctx, 24, r.barY, r.barW, r.barH, r.barH / 2);
+  for (const x of [leftX, rightX]) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    roundRect(ctx, x, r.barY, r.barW, r.barH, r.barH / 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = MACARON.our;
+  roundRect(ctx, leftX, r.barY, myW, r.barH, r.barH / 2);
   ctx.fill();
-  roundRect(ctx, layout.width - 24 - r.barW, r.barY, r.barW, r.barH, r.barH / 2);
+  ctx.fillStyle = MACARON.opp;
+  roundRect(ctx, rightX, r.barY, oppW, r.barH, r.barH / 2);
   ctx.fill();
 
-  ctx.fillStyle = COLORS.our;
-  roundRect(ctx, 24, r.barY, myW, r.barH, r.barH / 2);
-  ctx.fill();
-  ctx.fillStyle = COLORS.opp;
-  roundRect(ctx, layout.width - 24 - oppW, r.barY, oppW, r.barH, r.barH / 2);
-  ctx.fill();
-
-  ctx.fillStyle = COLORS.text;
-  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = MACARON.ink;
+  ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(`我方 ${myEnergy}`, 24, r.barY + r.barH + 6);
+  ctx.fillText(`我方 ${myEnergy}`, leftX, r.barY + r.barH + 6);
   ctx.textAlign = 'right';
-  ctx.fillText(`对手 ${oppEnergy}`, layout.width - 24, r.barY + r.barH + 6);
+  ctx.fillText(`对手 ${oppEnergy}`, rightX + r.barW, r.barY + r.barH + 6);
 }
 
 /**
@@ -100,98 +91,131 @@ function drawFigure(ctx, x, y, color, dir, lean) {
 }
 
 /**
- * 绘制顶部拔河视图。
+ * 绘制顶部拔河视图（叠加在场景层已铺好的天空之上）。
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} layout 见 theme.computeLayout
- * @param {object} view { px, myEnergy, oppEnergy, phase, countdownLeftMs, flash }
+ * @param {object} view { px, myEnergy, oppEnergy, phase, countdownLeftMs }
  */
 function drawRope(ctx, layout, view) {
   const v = view || {};
   const r = layout.rope;
+  const top = layout.top;
+  const W = layout.width;
 
-  // 背景：深色渐变，两侧阵营分色（§3.1）
-  const grad = ctx.createLinearGradient(0, layout.top.y, 0, layout.top.y + layout.top.h);
-  grad.addColorStop(0, COLORS.bgTop);
-  grad.addColorStop(1, COLORS.ground);
-  ctx.fillStyle = grad;
-  ctx.fillRect(layout.top.x, layout.top.y, layout.top.w, layout.top.h);
+  // 顶部玻璃面板（与中部/底部同材质，形成三分区）
+  ctx.fillStyle = MACARON.panel;
+  ctx.fillRect(top.x, top.y, top.w, top.h);
 
-  ctx.fillStyle = 'rgba(255,107,53,0.10)';
-  ctx.fillRect(layout.top.x, layout.top.y, layout.width / 2, layout.top.h);
-  ctx.fillStyle = 'rgba(47,168,225,0.10)';
-  ctx.fillRect(layout.width / 2, layout.top.y, layout.width / 2, layout.top.h);
+  // 薄荷赛道：左右阵营染色 + 双色地面
+  const bandY = Math.round(r.y - top.h * 0.17);
+  const bandH = Math.round(top.h * 0.3);
+  ctx.fillStyle = MACARON.trackTop;
+  roundRect(ctx, top.x + 6, bandY, top.w - 12, bandH, 22);
+  ctx.fill();
+  ctx.fillStyle = MACARON.trackBottom;
+  roundRect(ctx, top.x + 6, bandY + bandH * 0.62, top.w - 12, bandH * 0.38 + 6, 20);
+  ctx.fill();
+
+  ctx.save();
+  roundRect(ctx, top.x + 6, bandY, top.w - 12, bandH, 22);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(255,123,169,0.18)'; // 我方暖色侧
+  ctx.fillRect(top.x, bandY, W / 2, bandH);
+  ctx.fillStyle = 'rgba(97,194,242,0.18)'; // 对方冷色侧
+  ctx.fillRect(W / 2, bandY, W / 2, bandH);
+  ctx.restore();
 
   drawEnergyBars(ctx, layout, v.myEnergy || 0, v.oppEnergy || 0);
 
-  // 地面线
-  ctx.strokeStyle = COLORS.line;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(r.leftAnchor - 10, r.y + 44);
-  ctx.lineTo(r.rightAnchor + 10, r.y + 44);
-  ctx.stroke();
-
-  // 判定线（±maxPx，越线时高亮闪烁）
+  // 判定线（±maxPx，越线时高亮）
   const px = Math.max(-r.maxPx, Math.min(r.maxPx, v.px || 0));
-  const judgeL = r.cx - r.maxPx;
-  const judgeR = r.cx + r.maxPx;
   const nearWin = Math.abs(px) >= r.maxPx * 0.8;
-  for (const jx of [judgeL, judgeR]) {
-    ctx.strokeStyle = nearWin ? COLORS.warn : COLORS.line;
-    ctx.lineWidth = nearWin ? 4 : 2;
+  for (const jx of [r.cx - r.maxPx, r.cx + r.maxPx]) {
+    ctx.strokeStyle = nearWin ? MACARON.judgeHot : MACARON.judge;
+    ctx.lineWidth = nearWin ? 5 : 3;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(jx, r.y - 26);
-    ctx.lineTo(jx, r.y + 34);
+    ctx.moveTo(jx, bandY - 6);
+    ctx.lineTo(jx, bandY + bandH + 6);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(jx, bandY - 10, nearWin ? 6 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = nearWin ? MACARON.judgeHot : MACARON.judge;
+    ctx.fill();
   }
 
-  // 拔河绳：左半我方色、右半对方色，绳结随位移移动
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = COLORS.our;
+  // 拔河绳：金色 + 编织虚线（与首页 CTA 绳圈同材质）
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = MACARON.ourDeep;
+  ctx.lineWidth = 12;
   ctx.beginPath();
-  ctx.moveTo(r.leftAnchor, r.y);
+  ctx.moveTo(r.leftAnchor - 16, r.y);
   ctx.lineTo(r.cx + px, r.y);
   ctx.stroke();
-  ctx.strokeStyle = COLORS.opp;
+  ctx.strokeStyle = MACARON.oppDeep;
   ctx.beginPath();
   ctx.moveTo(r.cx + px, r.y);
-  ctx.lineTo(r.rightAnchor, r.y);
+  ctx.lineTo(r.rightAnchor + 16, r.y);
   ctx.stroke();
 
-  // 绳结
-  ctx.fillStyle = COLORS.knot;
+  ctx.strokeStyle = '#F5B526';
+  ctx.lineWidth = 7;
   ctx.beginPath();
-  ctx.arc(r.cx + px, r.y, 9, 0, Math.PI * 2);
+  ctx.moveTo(r.leftAnchor - 16, r.y);
+  ctx.lineTo(r.rightAnchor + 16, r.y);
+  ctx.stroke();
+  if (typeof ctx.setLineDash === 'function') {
+    ctx.setLineDash([6, 7]);
+    ctx.strokeStyle = 'rgba(206,132,18,0.5)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(r.leftAnchor - 16, r.y);
+    ctx.lineTo(r.rightAnchor + 16, r.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 绳结（位移可视化的焦点）
+  ctx.fillStyle = MACARON.knot;
+  ctx.beginPath();
+  ctx.arc(r.cx + px, r.y, 12, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(r.cx + px, r.y, 12, 0, Math.PI * 2);
+  ctx.stroke();
 
   // 双方小人：位移偏向谁，谁的姿态更"站得住"（lean>0 表示被拉向己方）
   const lean = px / (r.maxPx || 1);
-  drawFigure(ctx, r.leftAnchor - 6, r.y - 6, COLORS.our, 1, lean);
-  drawFigure(ctx, r.rightAnchor + 6, r.y - 6, COLORS.opp, -1, -lean);
+  drawFigure(ctx, r.leftAnchor - 10, r.y - 6, MACARON.ourDeep, 1, lean);
+  drawFigure(ctx, r.rightAnchor + 10, r.y - 6, MACARON.oppDeep, -1, -lean);
 
-  // 倒计时（开局阶段）
+  // 倒计时（开局阶段：浅色蒙层 + 描边渐变大字）
   if (v.phase === 'countdown') {
     const seconds = Math.max(1, Math.ceil((v.countdownLeftMs || 0) / 1000));
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(0, 0, layout.width, layout.height);
-    ctx.fillStyle = COLORS.white;
-    ctx.font = 'bold 72px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(String(seconds), layout.width / 2, layout.height / 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(0, 0, W, layout.height);
+    drawOutlinedText(ctx, String(seconds), W / 2, layout.height / 2, {
+      font: 'bold 92px sans-serif',
+      fill: '#FF9E4A',
+      outline: '#FFFFFF',
+      outlineWidth: 10,
+      glow: 'rgba(255,158,74,0.5)',
+      glowBlur: 16,
+    });
   }
 
-  // 对手即将越线时的全屏红色边缘警示（§3.1）
-  if (px <= -r.maxPx * 0.8) {
-    ctx.strokeStyle = 'rgba(255,77,79,0.55)';
-    ctx.lineWidth = 10;
-    ctx.strokeRect(0, 0, layout.width, layout.height);
-  }
+  // 即将越线：靠近我方 → 暖色描边脉冲；对手靠近 → 警示描边
   if (px >= r.maxPx * 0.8) {
-    ctx.strokeStyle = 'rgba(255,197,61,0.55)';
-    ctx.lineWidth = 10;
-    ctx.strokeRect(0, 0, layout.width, layout.height);
+    ctx.strokeStyle = 'rgba(255,180,61,0.75)';
+    ctx.lineWidth = 12;
+    ctx.strokeRect(0, 0, W, layout.height);
+  } else if (px <= -r.maxPx * 0.8) {
+    ctx.strokeStyle = 'rgba(255,122,138,0.7)';
+    ctx.lineWidth = 12;
+    ctx.strokeRect(0, 0, W, layout.height);
   }
 }
 
-module.exports = { drawRope, roundRect };
+module.exports = { drawRope };

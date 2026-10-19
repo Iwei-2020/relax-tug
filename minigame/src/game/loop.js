@@ -15,7 +15,7 @@
 const ttApi = require('../platform/tt.js');
 const { flush } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
-const { COLORS } = require('../components/theme.js');
+const { MACARON } = require('../components/theme.js');
 
 const TRACKER_FLUSH_EVERY = 120; // 约 2 秒（60FPS）上报一次
 
@@ -59,7 +59,7 @@ function createGame(options) {
     if (scene && typeof scene.update === 'function') scene.update(dt);
 
     if (ctx) {
-      ctx.fillStyle = COLORS.bg;
+      ctx.fillStyle = MACARON.skyBottom; // 浅色兜底底，避免任何漏画区域闪深色
       ctx.fillRect(0, 0, layout.width, layout.height);
       if (scene && typeof scene.draw === 'function') scene.draw(ctx);
     }
