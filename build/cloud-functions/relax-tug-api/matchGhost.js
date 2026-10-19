@@ -54,6 +54,8 @@ module.exports = {
   },
   "COMBO_HIGH_FROM": 8,
   "COMBO_BONUS_MAX": 6,
+  "PERFECT_WINDOW_RATIO": 0.5,
+  "PERFECT_MULTIPLIER": 1.5,
   "SEQUENCE_LENGTH": 3,
   "COUNTDOWN_MS": 3000,
   "ROUND_GAP_MS": 150,
@@ -267,6 +269,7 @@ module.exports = { OPENID_HEADERS, headerOf, openidFromContext };
 const {
   HIT_ENERGY,
   COMBO_BONUS_MAX,
+  PERFECT_MULTIPLIER,
   SEQUENCE_LENGTH,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
@@ -314,9 +317,15 @@ function validate(payload) {
     errors.push('durationMs 非法');
   }
   if (DIFFICULTY[p.difficulty] === undefined) errors.push('difficulty 非法');
+  // 判定分档与每日挑战标记（§6.2 / §4.4）：均为可选字段，出现时只做存在性/一致性校验。
+  if (p.perfectHits !== undefined) {
+    if (!isInt(p.perfectHits) || p.perfectHits < 0) errors.push('perfectHits 非法');
+    else if (isInt(p.hits) && p.perfectHits > p.hits) errors.push('perfectHits 超过 hits');
+  }
+  if (p.challengeMode !== undefined && typeof p.challengeMode !== 'boolean') errors.push('challengeMode 非法');
 
-  // 能量上限：每次命中最高 +（基础 + 最高连击加成）
-  if (isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX)) {
+  // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率
+  if (isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) {
     errors.push('myEnergy 超过理论上限');
   }
 
@@ -393,9 +402,11 @@ async function recordResult(store, openid, payload, nowMs) {
     day,
     result: payload.result,
     difficulty: payload.difficulty,
+    challengeMode: payload.challengeMode === true, // 每日挑战局单独归类（§4.4）
     durationMs: payload.durationMs,
     rounds: payload.rounds,
     hits: payload.hits,
+    perfectHits: isInt(payload.perfectHits) ? payload.perfectHits : 0, // 完美判定段数（§6.2）
     misses: payload.misses,
     timeouts: payload.timeouts,
     bestCombo: payload.bestCombo,

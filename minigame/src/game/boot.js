@@ -19,6 +19,7 @@ const { shareBattle } = require('../platform/share.js');
 const { setSinkPath, track } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
 const { DEFAULT_DIFFICULTY } = require('../config/config.js');
+const { dailyChallengeSeed } = require('../core/rng.js');
 
 /** 启动（由 minigame/game.js 调用）。 */
 function boot() {
@@ -34,24 +35,37 @@ function boot() {
   track('app_launch', { width: layout.width, height: layout.height, dpr: sysInfo.pixelRatio });
 
   let lastMatch = null; // 最近一局快照，用于「看广告复活」续战
+  let lastOptions = {}; // 最近一次开局的模式参数（难度 / 种子 / 每日挑战标记），供「再来一局」沿用
 
   const goHome = () => {
     game.setScene(
       createHomeScene({
         layout,
-        onStart: startBattle,
+        onStart: () => startBattle({}),
         onShare: () => shareBattle({}),
         onChallenge: () => shareBattle({ query: 'challenge=1' }),
+        // 每日挑战（§4.4）：种子由「日期 + 难度」在客户端派生，同日同难度全球同题
+        onDaily: () => startBattle({ challenge: true, seed: dailyChallengeSeed(Date.now(), DEFAULT_DIFFICULTY) }),
       })
     );
   };
 
-  function startBattle(resume) {
+  /**
+   * 开局。
+   * @param {{resume?:object, seed?:number, challenge?:boolean}} [options]
+   *   resume：续战快照（复活用）；seed：伪随机种子（每日挑战同题局）；challenge：每日挑战标记
+   */
+  function startBattle(options) {
+    const opts = options || {};
+    // 记住模式参数，使「再来一局」在每日挑战局后仍回到同一模式（同题重刷）
+    lastOptions = { seed: opts.seed, challenge: opts.challenge === true };
     game.setScene(
       createBattleScene({
         layout,
         difficulty: DEFAULT_DIFFICULTY, // TODO(接入云函数后)：改由 matchGhost 服务端下发
-        resume,
+        seed: opts.seed,
+        challenge: opts.challenge === true,
+        resume: opts.resume || null,
         onFinish: showResult,
       })
     );
@@ -63,8 +77,8 @@ function boot() {
       createResultScene({
         layout,
         summary: sum,
-        onReplay: () => startBattle(null),
-        onRevive: () => startBattle(lastMatch),
+        onReplay: () => startBattle(lastOptions),
+        onRevive: () => startBattle(Object.assign({}, lastOptions, { resume: lastMatch })),
         onHome: goHome,
         onShare: () => shareBattle({ summary: sum }),
       })

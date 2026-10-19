@@ -10,8 +10,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createRound, currentTargetId, judge, difficultyOf } = require('../minigame/src/core/matcher.js');
-const { DIFFICULTY, PALETTE, SEQUENCE_LENGTH } = require('../minigame/src/config/config.js');
+const { createRound, currentTargetId, judge, judgeGrade, difficultyOf } = require('../minigame/src/core/matcher.js');
+const { DIFFICULTY, PALETTE, SEQUENCE_LENGTH, PERFECT_WINDOW_RATIO } = require('../minigame/src/config/config.js');
 const { createRng } = require('../minigame/src/core/rng.js');
 
 test('createRound：候选色数量与输入窗口严格跟随难度档（§6.4）', () => {
@@ -51,6 +51,20 @@ test('createRound：非法难度 key 回落默认档（normal）', () => {
 test('judge：判定口径为「是否正确点击了目标色」，与点击次数无关（§2.2）', () => {
   assert.equal(judge('red', 'red'), true);
   assert.equal(judge('red', 'blue'), false);
+});
+
+test('judgeGrade：点对按时机分「完美 / 普通」，点错归 miss（§2.2 / §6.2 判定分档）', () => {
+  const W = 1000;
+  const edge = Math.floor(W * PERFECT_WINDOW_RATIO); // 完美窗口的右边界（含）
+
+  assert.equal(judgeGrade('red', 'red', 0, W), 'perfect', '窗口开启瞬间点中应为完美');
+  assert.equal(judgeGrade('red', 'red', edge, W), 'perfect', '完美窗口边界（含）仍为完美');
+  assert.equal(judgeGrade('red', 'red', edge + 1, W), 'good', '边界之后为普通');
+  assert.equal(judgeGrade('red', 'red', W, W), 'good', '窗口末点中为普通');
+  assert.equal(judgeGrade('red', 'red', W * 2, W), 'good', '超出窗口（本不应发生）仍按普通处理');
+
+  assert.equal(judgeGrade('red', 'blue', 1, W), 'miss', '点错不参与分档');
+  assert.equal(judgeGrade('red', 'red', 0, 0), 'good', '窗口非法（0）时不给完美，避免除零');
 });
 
 test('currentTargetId：随 seqIndex 逐段推进，走完序列或缺失时返回 null', () => {

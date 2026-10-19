@@ -31,6 +31,12 @@ const CONFIG = {
   comboHighFrom: 8, // 「连击 8 次及以上，每次额外 +6」的起始点
   comboBonusMax: 6, // 单次命中最高加成（12 + 6 = 18）
 
+  /* ── §6.2 判定分档（完美 / 普通） ─────────────────────────────── */
+  // 点对一段还按「时机」分档：窗口前 ratio 比例内点中 = 完美，能量 ×multiplier；其余 = 普通 ×1.0。
+  // 只作用于该段的「基础能量 + 连击加成」，不改变失误 / 空轮口径；AI 对手不做分档（见 §6.4）。
+  perfectWindowRatio: 0.5, // 完美窗口占输入窗口的比例（窗口前 50%）
+  perfectMultiplier: 1.5, // 完美判定能量倍率（含连击加成后四舍五入取整）
+
   /* ── §2.2 目标颜色序列 ────────────────────────────────────────── */
   // 一轮 = 一条 N 段颜色序列，玩家需按序逐段点中；固定 3 段（每段仍享 §6.4 的输入窗口）。
   // 序列内颜色互不重复 → 底部候选面板中每个目标色恰好一块，保留「唯一且明确」的正确答案（§3.2）。
@@ -100,6 +106,8 @@ module.exports = {
   COMBO_BONUS: CONFIG.comboBonus,
   COMBO_HIGH_FROM: CONFIG.comboHighFrom,
   COMBO_BONUS_MAX: CONFIG.comboBonusMax,
+  PERFECT_WINDOW_RATIO: CONFIG.perfectWindowRatio,
+  PERFECT_MULTIPLIER: CONFIG.perfectMultiplier,
 
   SEQUENCE_LENGTH: CONFIG.sequenceLength,
 

@@ -21,7 +21,7 @@ const {
   outcome,
   finalResult,
 } = require('../minigame/src/core/energy.js');
-const { HIT_ENERGY, MISS_PENALTY, DISPLACEMENT_FACTOR, WIN_NET_ENERGY, DRAW_BAND_PX } = require('../minigame/src/config/config.js');
+const { HIT_ENERGY, MISS_PENALTY, DISPLACEMENT_FACTOR, WIN_NET_ENERGY, DRAW_BAND_PX, PERFECT_MULTIPLIER } = require('../minigame/src/config/config.js');
 
 test('comboBonus：仅在第 3 / 5 / 8+ 次命中生效（§6.2 连击表）', () => {
   assert.equal(comboBonus(1), 0);
@@ -60,6 +60,35 @@ test('applyHit：单次命中上限 = 基础 +12 与最高加成 +6（§6.2）',
   for (let i = 0; i < 8; i += 1) s = applyHit(s);
   assert.equal(s.combo, 8);
   assert.equal(s.lastGain, 18); // 12 + 6
+  assert.equal(s.perfects, 0, '普通命中不计入完美段数');
+});
+
+test('applyHit：完美判定（perfect=true）能量 ×1.5 并计入 perfects（§6.2 判定分档）', () => {
+  let s = createEnergyState();
+  s = applyHit(s, undefined, true);
+  assert.equal(s.energy, Math.round(HIT_ENERGY * PERFECT_MULTIPLIER)); // 12 × 1.5 = 18
+  assert.equal(s.lastGain, 18);
+  assert.equal(s.hits, 1);
+  assert.equal(s.perfects, 1);
+
+  // 连击加成同样吃倍率：第 3 次命中 (12 + 2) × 1.5 = 21
+  let t = createEnergyState();
+  t = applyHit(t);
+  t = applyHit(t);
+  t = applyHit(t, undefined, true);
+  assert.equal(t.lastGain, Math.round((HIT_ENERGY + 2) * PERFECT_MULTIPLIER));
+  assert.equal(t.perfects, 1);
+
+  // 完美上限：第 8 次命中 (12 + 6) × 1.5 = 27
+  let u = createEnergyState();
+  for (let i = 0; i < 7; i += 1) u = applyHit(u);
+  u = applyHit(u, undefined, true);
+  assert.equal(u.lastGain, 27);
+
+  // 浮动系数（AI 口径）与倍率可叠加，且默认不必传 perfect
+  const v = applyHit(createEnergyState(), 1);
+  assert.equal(v.perfects, 0);
+  assert.equal(v.lastGain, HIT_ENERGY);
 });
 
 test('applyMiss：扣 6 分、连击清零、能量不为负（§6.2）', () => {

@@ -22,7 +22,8 @@ const {
   summary,
 } = require('../minigame/src/core/battle.js');
 const { COUNTDOWN_MS, GAME_HARD_LIMIT_MS, DIFFICULTY, SEQUENCE_LENGTH } = require('../minigame/src/config/config.js');
-const { createRng } = require('../minigame/src/core/rng.js');
+const { createRng, dailyChallengeSeed } = require('../minigame/src/core/rng.js');
+const { createRound } = require('../minigame/src/core/matcher.js');
 
 /** 当前待点段的目标色 id（§2.2：一轮 = N 段序列，逐段判定）。 */
 function curTarget(m) {
@@ -161,6 +162,63 @@ test('状态推进不可变：submit 返回新对象且不修改入参', () => {
   assert.equal(next.round.seqIndex, snapshotSeq + 1, '点对一段推进一段');
   assert.equal(next.round.done, false, '一段命中不结束本轮');
   assert.equal(next.roundIndex, snapshotRounds, '本轮未结束，轮次不推进');
+});
+
+test('判定分档：窗口前段点中记「完美」（能量更高），后段点中记「普通」（§2.2 / §6.2）', () => {
+  const rand = createRng(21);
+  let m = beginPlaying(createMatch({ difficulty: 'normal' }));
+  m = nextRound(m, rand);
+  const w = m.round.windowMs;
+
+  // 完美：在窗口前 50% 内点中
+  const early = submit(m, curTarget(m), Math.floor(w * 0.2), rand);
+  assert.equal(early.lastRound.kind, 'hit');
+  assert.equal(early.lastRound.grade, 'perfect');
+  assert.equal(early.lastRound.perfect, true);
+  assert.equal(early.player.perfects, 1);
+
+  // 普通：在窗口后半段点中
+  const late = submit(m, curTarget(m), Math.floor(w * 0.9), rand);
+  assert.equal(late.lastRound.grade, 'good');
+  assert.equal(late.lastRound.perfect, false);
+  assert.equal(late.player.perfects, 0);
+  assert.ok(early.player.energy > late.player.energy, '完美判定单段能量应高于普通判定');
+
+  // 点错不参与分档
+  const wrong = m.round.optionIds.find((id) => id !== curTarget(m));
+  const miss = submit(m, wrong, 10, rand);
+  assert.equal(miss.lastRound.kind, 'miss');
+  assert.equal(miss.lastRound.grade, 'miss');
+});
+
+test('summary：perfectHits 与 challengeMode 口径（§6.2 判定分档 / §4.4 每日挑战）', () => {
+  const rand = createRng(31);
+  let m = beginPlaying(createMatch({ difficulty: 'normal', challenge: true }));
+  m = nextRound(m, rand);
+  m = submit(m, curTarget(m), 10, rand); // 完美一段
+  m = submit(m, curTarget(m), m.round.windowMs, rand); // 普通一段
+  const s = summary(m);
+  assert.equal(s.perfectHits, 1, '完美段数应单独统计');
+  assert.ok(s.perfectHits <= s.hits, '完美段数不得超过命中段数');
+  assert.equal(s.challengeMode, true, '每日挑战局应打标记');
+  assert.equal(summary(createMatch({})).challengeMode, false, '普通对局不带挑战标记');
+});
+
+test('每日挑战：同日同难度种子稳定、跨日或换难度即变，且同种子生成同一局（§4.4）', () => {
+  const t1 = Date.parse('2026-10-19T09:00:00+08:00');
+  const t2 = Date.parse('2026-10-19T23:30:00+08:00');
+  const t3 = Date.parse('2026-10-20T00:30:00+08:00');
+
+  assert.equal(dailyChallengeSeed(t1, 'normal'), dailyChallengeSeed(t2, 'normal'), '同一自然日内种子稳定');
+  assert.notEqual(dailyChallengeSeed(t1, 'normal'), dailyChallengeSeed(t3, 'normal'), '跨自然日种子变化');
+  assert.notEqual(dailyChallengeSeed(t1, 'normal'), dailyChallengeSeed(t1, 'hard'), '同日不同难度种子不同');
+  assert.ok(dailyChallengeSeed(t1, 'normal') >= 0, '种子为 32 位无符号整数');
+
+  // 同种子 → 同一轮序列，这是「全球同题」可比性的来源
+  const a = createRound('normal', createRng(dailyChallengeSeed(t1, 'normal')));
+  const b = createRound('normal', createRng(dailyChallengeSeed(t2, 'normal')));
+  assert.deepEqual(b.targetIds, a.targetIds);
+  assert.deepEqual(b.optionIds, a.optionIds);
 });
 
 test('summary：结算摘要字段口径（命中率 = 命中段数 / 总判定段数）', () => {

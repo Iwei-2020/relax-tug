@@ -40,4 +40,33 @@ function randInt(minInclusive, maxInclusive, rand) {
   return minInclusive + Math.floor(rand() * span);
 }
 
-module.exports = { createRng, pick, chance, randInt };
+/**
+ * 32 位字符串哈希（FNV-1a）：把「日期 + 难度」这类可读键稳定折叠成一个整数种子。
+ * 目的：同一 key 在任何设备、任何时刻都得到同一 seed，天然支持「同日同题」。
+ * @param {string} key
+ * @returns {number} 32 位无符号整数（可能为 0，createRng 内部会兜底为 1）
+ */
+function hashSeed(key) {
+  const s = String(key);
+  let h = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193); // FNV prime
+  }
+  return h >>> 0;
+}
+
+/**
+ * 每日挑战种子（《项目说明书》§4.4）：按「自然日（UTC+8）+ 难度档」派生。
+ * 同一自然日 + 同一难度 → 同一局（同序列、同 AI 行为），不同设备结果一致；
+ * 种子完全由客户端推导，**无需服务端下发**。
+ * @param {number} nowMs 当前时间戳（毫秒）
+ * @param {string} difficultyKey 难度档
+ * @returns {number} 32 位整数种子
+ */
+function dailyChallengeSeed(nowMs, difficultyKey) {
+  const dayKey = new Date(nowMs + 8 * 3600 * 1000).toISOString().slice(0, 10); // UTC+8 自然日
+  return hashSeed(`${dayKey}|${difficultyKey}`);
+}
+
+module.exports = { createRng, pick, chance, randInt, hashSeed, dailyChallengeSeed };

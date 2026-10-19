@@ -11,7 +11,7 @@
  * 每段仍存在「唯一且明确」的正确答案（§3.2）。
  */
 
-const { DIFFICULTY, DEFAULT_DIFFICULTY, SEQUENCE_LENGTH } = require('../config/config.js');
+const { DIFFICULTY, DEFAULT_DIFFICULTY, SEQUENCE_LENGTH, PERFECT_WINDOW_RATIO } = require('../config/config.js');
 const { pickSequence, pickDistractors, shuffle } = require('./colors.js');
 
 /** 取难度档参数；非法 key 回落默认档（普通）。 */
@@ -58,9 +58,27 @@ function judge(targetId, clickedId) {
   return targetId === clickedId;
 }
 
+/**
+ * 判定分档（《项目说明书》§2.2 / §6.2）：点对还要按**时机**分档。
+ *   - 'perfect' 在窗口前 ratio 比例内点中（该段能量 ×multiplier，见 core/energy.applyHit）
+ *   - 'good'    在窗口后半段点中（×1.0）
+ *   - 'miss'    点错了目标色（不参与分档）
+ * 口径：`elapsedMs` 从本段窗口开启算起，`windowMs` 为该段的输入窗口时长。
+ * @param {string} targetId 当前待点段的目标色 id
+ * @param {string} clickedId 玩家实际点击的色 id
+ * @param {number} elapsedMs 本段已耗时
+ * @param {number} windowMs 本段输入窗口时长
+ * @returns {'perfect'|'good'|'miss'}
+ */
+function judgeGrade(targetId, clickedId, elapsedMs, windowMs) {
+  if (!judge(targetId, clickedId)) return 'miss';
+  const ratio = windowMs > 0 ? Math.max(0, elapsedMs) / windowMs : 1;
+  return ratio <= PERFECT_WINDOW_RATIO ? 'perfect' : 'good';
+}
+
 /** 候选色数量（供渲染层排布网格）。 */
 function optionCount(round) {
   return round.optionIds.length;
 }
 
-module.exports = { createRound, currentTargetId, judge, difficultyOf, optionCount };
+module.exports = { createRound, currentTargetId, judge, judgeGrade, difficultyOf, optionCount };

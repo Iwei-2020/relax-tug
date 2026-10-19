@@ -43,9 +43,9 @@ function computeResultLayout(layout) {
   const cx = Math.round(W / 2);
 
   const panelW = Math.round(Math.min(W * 0.836, 340));
-  const rowH = Math.round(H * 0.042);
+  const rowH = Math.round(H * 0.039); // 6 行数据（含 §4.3 新增的「完美判定」）需略收紧行高
   const padH = Math.round(H * 0.022);
-  const rows = 5;
+  const rows = 6;
   const panel = {
     x: Math.round(cx - panelW / 2),
     y: Math.round(H * 0.3),
@@ -278,6 +278,7 @@ function createResultScene(options) {
       // 数据面板（§4.3）
       const rows = [
         ['命中次数', String(summary.hits || 0)],
+        ['完美判定', String(summary.perfectHits || 0)],
         ['最高连击', String(summary.bestCombo || 0)],
         ['命中率', `${Math.round((summary.accuracy || 0) * 100)}%`],
         ['对局时长', `${((summary.durationMs || 0) / 1000).toFixed(1)}s`],

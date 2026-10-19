@@ -56,6 +56,10 @@ const HOME = {
   violet: '#B98CFF',
   violetGlow: 'rgba(185,140,255,0.55)',
   violetFill: 'rgba(150,110,255,0.42)',
+  // 每日挑战：琥珀金色描边玻璃（与主 CTA 的金绳呼应，但更克制）
+  gold: '#FFC53D',
+  goldGlow: 'rgba(255,197,61,0.6)',
+  goldFill: 'rgba(255,214,120,0.34)',
   subText: '#FFFFFF',
   subTextGlow: 'rgba(24,58,122,0.55)',
 

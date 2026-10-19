@@ -33,12 +33,15 @@ const END_DELAY_MS = 600;
 const FEEDBACK_MS = 260;
 /** 命中/失误对拔河视图的冲击反馈时长（连续命中会叠加更长的余韵，见 resolve） */
 const IMPULSE_MS = 380;
+/** 「完美判定」反馈持续时长（§7.1：金色描边 + "完美!" 提示） */
+const PERFECT_MS = 500;
 
 /**
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {string} [options.difficulty] 难度档（服务端下发失败时用本地默认档兜底）
- * @param {number} [options.seed] 伪随机种子（测试/回放用）
+ * @param {number} [options.seed] 伪随机种子（每日挑战同题局 / 测试 / 回放用）
+ * @param {boolean} [options.challenge] 是否每日挑战局（§4.4：结算摘要打 challengeMode 标记）
  * @param {object} [options.resume] 续战快照（看广告复活用：保留双方已积攒能量）
  * @param {(summary:object, match:object) => void} options.onFinish 对局结束回调
  */
@@ -49,7 +52,7 @@ function createBattleScene(options) {
 
   // 续战（§5.1 失败复活）：保留能量与连击，仅把阶段复位为对局中并等一轮刷新
   const resumed = opts.resume && opts.resume.phase ? { ...opts.resume, phase: 'playing', result: null, countdownLeftMs: 0 } : null;
-  let match = resumed || createMatch({ difficulty: opts.difficulty });
+  let match = resumed || createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true });
   let roundLeftMs = 0;
   let gapLeftMs = resumed ? ROUND_GAP_MS : 0;
   let endDelayMs = 0;
@@ -64,6 +67,7 @@ function createBattleScene(options) {
   let missIndex = -1;
   let feedbackLeftMs = 0;
   let comboPop = 0;
+  let perfectLeftMs = 0; // 「完美判定」反馈剩余时长（§7.1）
   // 拔河视图的动效状态：累计时间驱动待机律动，impulse 驱动命中/失误冲击
   let tMs = 0;
   let impulseLeftMs = 0;
@@ -104,8 +108,9 @@ function createBattleScene(options) {
     if (last.kind === 'hit') {
       hitIndex = match.round.optionIds.indexOf(last.clickedId);
       comboPop = last.comboAfter >= 3 ? 0.35 : 0.2;
+      if (last.perfect) perfectLeftMs = PERFECT_MS; // 完美判定：金色描边 + "完美!" 提示（§7.1）
       ttApi.vibrateShort();
-      track(EVENTS.ROUND_HIT, { combo: last.comboAfter, gain: last.playerGain });
+      track(EVENTS.ROUND_HIT, { combo: last.comboAfter, gain: last.playerGain, perfect: last.perfect === true });
     } else if (last.kind === 'miss') {
       missIndex = match.round.optionIds.indexOf(last.clickedId);
       track(EVENTS.ROUND_MISS, { penalty: last.playerGain });
@@ -135,6 +140,7 @@ function createBattleScene(options) {
       // 待机律动时间轴 + 冲击衰减（与对局阶段无关，结算延时期间也继续动）
       tMs += dt;
       if (impulseLeftMs > 0) impulseLeftMs = Math.max(0, impulseLeftMs - dt);
+      if (perfectLeftMs > 0) perfectLeftMs = Math.max(0, perfectLeftMs - dt);
 
       if (feedbackLeftMs > 0) {
         feedbackLeftMs -= dt;
@@ -214,6 +220,7 @@ function createBattleScene(options) {
         roundRemaining: match.round && roundLeftMs > 0 ? roundLeftMs / match.round.windowMs : 0,
         combo: match.player.combo,
         comboPop,
+        perfect: perfectLeftMs > 0,
       });
 
       drawPalette(ctx, layout, match.round, { pressedIndex, hitIndex, missIndex });
@@ -258,9 +265,9 @@ function createBattleScene(options) {
       return match;
     },
 
-    /** 复位到倒计时（重开一局时复用同一难度）。 */
+    /** 复位到倒计时（重开一局时复用同一难度与模式标记）。 */
     reset() {
-      match = createMatch({ difficulty: opts.difficulty });
+      match = createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true });
       roundLeftMs = 0;
       gapLeftMs = 0;
       endDelayMs = 0;
@@ -268,6 +275,7 @@ function createBattleScene(options) {
       hitIndex = -1;
       missIndex = -1;
       impulseLeftMs = 0;
+      perfectLeftMs = 0;
       tMs = 0;
     },
   };

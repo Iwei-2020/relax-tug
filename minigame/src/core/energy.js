@@ -7,10 +7,12 @@
  * （历史上"原地改字段不落库/不生效"的坑正是来自就地修改，这里从数据结构上杜绝。）
  *
  * 数据形状 EnergyState：
- *   { energy, combo, bestCombo, hits, misses, timeouts, lastGain }
+ *   { energy, combo, bestCombo, hits, perfects, misses, timeouts, lastGain }
  *   - energy    累计能量（≥ 0）
  *   - combo     当前连击数（命中 +1，点错清零，空轮不变）
  *   - bestCombo 本局最高连击
+ *   - hits      命中段数
+ *   - perfects  其中「完美判定」的段数（§6.2 判定分档）
  *   - lastGain  最近一次操作的净变化（命中为正、失误为负、空轮为 0），供 UI 飘字用
  */
 
@@ -21,6 +23,7 @@ const {
   COMBO_BONUS,
   COMBO_HIGH_FROM,
   COMBO_BONUS_MAX,
+  PERFECT_MULTIPLIER,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
   DRAW_BAND_PX,
@@ -28,7 +31,7 @@ const {
 
 /** 空能量状态（开局值）。 */
 function createEnergyState() {
-  return { energy: 0, combo: 0, bestCombo: 0, hits: 0, misses: 0, timeouts: 0, lastGain: 0 };
+  return { energy: 0, combo: 0, bestCombo: 0, hits: 0, perfects: 0, misses: 0, timeouts: 0, lastGain: 0 };
 }
 
 /**
@@ -46,18 +49,21 @@ function comboBonus(comboAfterHit) {
  * 命中一次。
  * @param {object} state 能量状态
  * @param {number} [jitter] 可选浮动系数（AI 对手的 ±10% 浮动，见 §6.4）；可缺省＝精确值
+ * @param {boolean} [perfect] 是否「完美判定」：为 true 时该段能量 ×PERFECT_MULTIPLIER（§6.2）
  * @returns {object} 新状态
  */
-function applyHit(state, jitter) {
+function applyHit(state, jitter, perfect) {
   const combo = state.combo + 1;
   const base = HIT_ENERGY + comboBonus(combo);
-  const gain = jitter === undefined ? base : Math.max(1, Math.round(base * jitter));
+  const boosted = perfect ? Math.round(base * PERFECT_MULTIPLIER) : base;
+  const gain = jitter === undefined ? boosted : Math.max(1, Math.round(boosted * jitter));
   return {
     ...state,
     energy: state.energy + gain,
     combo,
     bestCombo: Math.max(state.bestCombo, combo),
     hits: state.hits + 1,
+    perfects: state.perfects + (perfect ? 1 : 0),
     lastGain: gain,
   };
 }

@@ -35,7 +35,7 @@ function chipShadow(ctx, blur, offsetY) {
  * 倒计时用**条状**而非环形（§3.2 两者皆可）：序列模式下时间属于「当前段」，
  * 横条能直观表达"每段一格时间"，且不会在宽条带上套出一个畸形的圆。
  *
- * @param {object} view { roundRemaining, combo, comboPop }
+ * @param {object} view { roundRemaining, combo, comboPop, perfect }
  */
 function drawTarget(ctx, layout, round, view) {
   const v = view || {};
@@ -112,6 +112,18 @@ function drawTarget(ctx, layout, round, view) {
       ctx.stroke();
       ctx.restore();
     }
+
+    // 完美判定（§7.1）：刚点过的段追加金色描边 + 外发光，与普通命中一眼可辨
+    if (v.perfect && cleared > 0) {
+      ctx.save();
+      ctx.strokeStyle = MACARON.warn;
+      ctx.lineWidth = 6;
+      ctx.shadowColor = 'rgba(255,180,61,0.95)';
+      ctx.shadowBlur = 20;
+      roundRect(ctx, x + (cleared - 1) * segW + 2, y + 2, Math.max(8, segW - 4), t.bandH - 4, t.radius * 0.6);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // 当前段的剩余时间（条状，颜色由绿渐变到红）
@@ -144,12 +156,12 @@ function drawTarget(ctx, layout, round, view) {
     ctx.restore();
   }
 
-  ctx.fillStyle = MACARON.inkDim;
-  ctx.font = '15px sans-serif';
+  ctx.fillStyle = v.perfect ? MACARON.warn : MACARON.inkDim;
+  ctx.font = v.perfect ? 'bold 16px sans-serif' : '15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText(
-    n > 0 ? `按顺序点下方同色块（${cleared}/${n}）` : '按顺序点下方同色块',
+    v.perfect ? '完美！反应真快' : n > 0 ? `按顺序点下方同色块（${cleared}/${n}）` : '按顺序点下方同色块',
     t.cx,
     barY + barH + 10,
   );

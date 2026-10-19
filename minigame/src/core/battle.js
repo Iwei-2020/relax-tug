@@ -18,18 +18,19 @@ const {
   MATCH_TIMEOUT_MS,
 } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout, displacement, finalResult } = require('./energy.js');
-const { createRound, currentTargetId, judge } = require('./matcher.js');
+const { createRound, currentTargetId, judgeGrade } = require('./matcher.js');
 const { createGhost, stepGhost } = require('./ghost.js');
 
 /**
  * 创建一局（未开始，处于倒计时阶段）。
- * @param {{difficulty?:string, matchTimeoutMs?:number}} [options]
+ * @param {{difficulty?:string, matchTimeoutMs?:number, challenge?:boolean}} [options]
  */
 function createMatch(options) {
   const opts = options || {};
   const difficulty = DIFFICULTY[opts.difficulty] ? opts.difficulty : DEFAULT_DIFFICULTY;
   return {
     difficulty,
+    challenge: opts.challenge === true, // 每日挑战局标记（§4.4：固定种子同题局，单独记账）
     matchTimeoutMs: opts.matchTimeoutMs === undefined ? MATCH_TIMEOUT_MS : opts.matchTimeoutMs,
     phase: 'countdown',
     countdownLeftMs: COUNTDOWN_MS,
@@ -94,12 +95,19 @@ function submit(match, clickedId, dtMs, rand) {
   const seqLength = match.round.targetIds.length;
   const segIndex = match.round.seqIndex;
 
-  const elapsedMs = match.elapsedMs + Math.max(0, dtMs || 0);
+  const segMs = Math.max(0, dtMs || 0);
+  const elapsedMs = match.elapsedMs + segMs;
 
-  // 我方本段：命中吃连击加成，点错扣分并清零连击，超时（空段）不增不减
+  // 我方本段：命中吃连击加成（+ 判定分档倍率），点错扣分并清零连击，超时（空段）不增不减
   const timedOut = clickedId === null || clickedId === undefined;
-  const correct = timedOut ? false : judge(targetId, clickedId);
-  const player = timedOut ? applyTimeout(match.player) : correct ? applyHit(match.player) : applyMiss(match.player);
+  const grade = timedOut ? 'miss' : judgeGrade(targetId, clickedId, segMs, match.round.windowMs);
+  const correct = grade !== 'miss';
+  const perfect = grade === 'perfect';
+  const player = timedOut
+    ? applyTimeout(match.player)
+    : correct
+      ? applyHit(match.player, undefined, perfect)
+      : applyMiss(match.player);
 
   // 对手也按「段」推进：与玩家逐段对称，序列化改动才不会打破 §6.4 的能量平衡口径
   const stepped = stepGhost(match.ghost, player.energy, rand);
@@ -132,6 +140,8 @@ function submit(match, clickedId, dtMs, rand) {
     result,
     lastRound: {
       kind: timedOut ? 'timeout' : correct ? 'hit' : 'miss',
+      grade, // 'perfect' | 'good' | 'miss'（超时归 'miss'，见 §6.2 判定分档）
+      perfect,
       correct,
       clickedId: timedOut ? null : clickedId,
       targetId,
@@ -159,6 +169,7 @@ function shouldFallbackToAI(match, waitedMs) {
 /**
  * 结算摘要（供结算页展示 §4.3 数据面板，以及上报服务端 reportResult）。
  * 命中率以「命中 / (命中 + 失误 + 空轮)」计，无操作时记 0。
+ * perfectHits：其中「完美判定」的段数（§6.2 判定分档）；challengeMode：每日挑战局标记（§4.4）。
  */
 function summary(match) {
   const p = match.player;
@@ -166,9 +177,11 @@ function summary(match) {
   return {
     result: match.result,
     difficulty: match.difficulty,
+    challengeMode: match.challenge === true,
     durationMs: match.elapsedMs,
     rounds: match.roundIndex,
     hits: p.hits,
+    perfectHits: p.perfects,
     misses: p.misses,
     timeouts: p.timeouts,
     bestCombo: p.bestCombo,
