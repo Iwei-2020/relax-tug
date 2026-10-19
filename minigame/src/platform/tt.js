@@ -141,6 +141,67 @@ function vibrateShort() {
   }
 }
 
+/**
+ * 离屏画布（分享卡预渲染用，§4.5）。
+ * 抖音小游戏无 DOM，分享卡需在离屏画布上绘制后导出为临时图片。
+ * 无宿主能力或 API 缺失时返回 null —— 调用方**必须**走「不带图的纯文案分享」降级，不得中断流程。
+ * @param {number} width
+ * @param {number} height
+ * @returns {object|null} 离屏画布对象（有 getContext('2d')）
+ */
+function createOffscreenCanvas(width, height) {
+  const tt = getTt();
+  if (!tt || typeof tt.createOffscreenCanvas !== 'function') return null;
+  const w = Math.max(1, Math.round(width || 1));
+  const h = Math.max(1, Math.round(height || 1));
+  try {
+    const canvas = tt.createOffscreenCanvas({ type: '2d', width: w, height: h });
+    if (!canvas || typeof canvas.getContext !== 'function') return null;
+    canvas.width = w;
+    canvas.height = h;
+    return canvas;
+  } catch (err) {
+    return null; // 部分基础库版本不支持：视为能力缺失，交由调用方降级
+  }
+}
+
+/**
+ * 把画布导出为临时图片路径（分享卡作为 shareAppMessage.imageUrl 使用）。
+ * 优先同步 API；仅有异步 API 时回调返回结果；均不可用则回调 null（调用方降级）。
+ * @param {object} canvas 画布（主画布或离屏画布）
+ * @param {(path:string|null) => void} [callback]
+ */
+function exportCanvasToTempFile(canvas, callback) {
+  const cb = typeof callback === 'function' ? callback : function noop() {};
+  if (!canvas) {
+    cb(null);
+    return;
+  }
+  const opts = { fileType: 'png', quality: 0.92 };
+  try {
+    if (typeof canvas.toTempFilePathSync === 'function') {
+      cb(canvas.toTempFilePathSync(opts) || null);
+      return;
+    }
+    if (typeof canvas.toTempFilePath === 'function') {
+      canvas.toTempFilePath({
+        fileType: opts.fileType,
+        quality: opts.quality,
+        success(res) {
+          cb((res && res.tempFilePath) || null);
+        },
+        fail() {
+          cb(null);
+        },
+      });
+      return;
+    }
+  } catch (err) {
+    /* 导出失败：走降级 */
+  }
+  cb(null);
+}
+
 module.exports = {
   globalScope,
   getTt,
@@ -157,4 +218,6 @@ module.exports = {
   setStorageSync,
   getStorageSync,
   vibrateShort,
+  createOffscreenCanvas,
+  exportCanvasToTempFile,
 };

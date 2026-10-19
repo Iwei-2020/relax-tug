@@ -15,6 +15,7 @@ const { createGame } = require('./loop.js');
 const { createHomeScene } = require('../scenes/home.js');
 const { createBattleScene } = require('../scenes/battle.js');
 const { createResultScene } = require('../scenes/result.js');
+const { createShareCardScene } = require('../scenes/share-card.js');
 const { shareBattle } = require('../platform/share.js');
 const { setSinkPath, track } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
@@ -71,6 +72,21 @@ function boot() {
     );
   }
 
+  /**
+   * 分享卡预览页（§4.5）：结算页「分享战绩/挑战好友」进入。
+   * 卡面由 scenes/share-card 渲染；离屏能力缺失时 imagePath 为空，分享自动降级为纯文案。
+   */
+  function openShareCard(sum) {
+    game.setScene(
+      createShareCardScene({
+        layout,
+        summary: sum,
+        onBack: () => showResult(sum, lastMatch),
+        onShare: (imagePath) => shareBattle({ summary: sum, imageUrl: imagePath }),
+      })
+    );
+  }
+
   function showResult(sum, match) {
     lastMatch = match;
     game.setScene(
@@ -80,7 +96,7 @@ function boot() {
         onReplay: () => startBattle(lastOptions),
         onRevive: () => startBattle(Object.assign({}, lastOptions, { resume: lastMatch })),
         onHome: goHome,
-        onShare: () => shareBattle({ summary: sum }),
+        onShare: () => openShareCard(sum),
       })
     );
   }
