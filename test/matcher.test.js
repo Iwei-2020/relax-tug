@@ -3,15 +3,15 @@
 /**
  * 回合生成与判定单测
  *
- * 依据：《项目说明书》§2.2（每轮判定时序）、§3.3（候选色数量受难度控制）、§6.4（难度曲线）。
- * 覆盖：各难度档的候选色数量、目标色唯一存在、选项去重、输入窗口时长、判定口径、种子可复现。
+ * 依据：《项目说明书》§2.2（每轮判定时序，目标为 N 段颜色序列）、§3.3（候选色数量受难度控制）、§6.4（难度曲线）。
+ * 覆盖：各难度档的候选色数量、每段目标色在候选集中唯一可得、选项去重、输入窗口时长、判定口径、种子可复现。
  */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createRound, judge, difficultyOf } = require('../minigame/src/core/matcher.js');
-const { DIFFICULTY, PALETTE } = require('../minigame/src/config/config.js');
+const { createRound, currentTargetId, judge, difficultyOf } = require('../minigame/src/core/matcher.js');
+const { DIFFICULTY, PALETTE, SEQUENCE_LENGTH } = require('../minigame/src/config/config.js');
 const { createRng } = require('../minigame/src/core/rng.js');
 
 test('createRound：候选色数量与输入窗口严格跟随难度档（§6.4）', () => {
@@ -24,14 +24,20 @@ test('createRound：候选色数量与输入窗口严格跟随难度档（§6.4�
   }
 });
 
-test('createRound：目标色必然出现在候选集中且候选色互不重复、均来自调色板', () => {
+test('createRound：目标为 N 段互不重复的序列，每段都能在候选集中找到唯一答案', () => {
   const rand = createRng(20261019);
   const ids = new Set(PALETTE.map((c) => c.id));
   for (let i = 0; i < 200; i += 1) {
     const round = createRound('hell', rand); // 最严苛：9 个候选
-    assert.ok(round.optionIds.includes(round.targetId), '目标色必须可在底部找到唯一正确答案');
+    assert.equal(round.targetIds.length, SEQUENCE_LENGTH, '目标应为固定 N 段序列');
+    assert.equal(new Set(round.targetIds).size, round.targetIds.length, '序列内颜色不得重复');
+    for (const id of round.targetIds) {
+      assert.ok(round.optionIds.includes(id), `目标段 ${id} 必须可在底部找到唯一正确答案`);
+    }
     assert.equal(new Set(round.optionIds).size, round.optionIds.length, '候选色不得重复');
     for (const id of round.optionIds) assert.ok(ids.has(id), `候选色 ${id} 不在调色板内`);
+    assert.equal(round.seqIndex, 0, '新的一轮从第 0 段开始');
+    assert.equal(round.done, false);
   }
 });
 
@@ -45,6 +51,16 @@ test('createRound：非法难度 key 回落默认档（normal）', () => {
 test('judge：判定口径为「是否正确点击了目标色」，与点击次数无关（§2.2）', () => {
   assert.equal(judge('red', 'red'), true);
   assert.equal(judge('red', 'blue'), false);
+});
+
+test('currentTargetId：随 seqIndex 逐段推进，走完序列或缺失时返回 null', () => {
+  const round = createRound('normal', createRng(1));
+  const ids = round.targetIds;
+  for (let i = 0; i < ids.length; i += 1) {
+    assert.equal(currentTargetId({ ...round, seqIndex: i }), ids[i], `第 ${i} 段目标色应逐段推进`);
+  }
+  assert.equal(currentTargetId({ ...round, seqIndex: ids.length }), null, '走完序列后无当前段');
+  assert.equal(currentTargetId(null), null);
 });
 
 test('createRound：同一种子可复现同一轮（支持回放与稳定单测）', () => {

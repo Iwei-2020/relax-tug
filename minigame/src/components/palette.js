@@ -7,7 +7,8 @@
  * 玩法色块本身仍是 config.palette 的高饱和色（**不做马卡龙化**），
  * 只用白色厚描边 + 柔和投影与浅底拉开层次，保证 §3.2「目标色一眼可辨」。
  *
- * 中部：单个大色块居中（尺寸 ≥160px、圆角 16~24px），环形倒计时由绿渐变到红，上方显示连击。
+ * 中部：一条横向彩色条带，按序列段数等宽分段（§2.2 目标是一段一段的颜色序列），
+ *       已点对的段压白、当前待点段白色粗描边高亮，条状倒计时表示「当前段」的剩余时间。
  * 底部：候选色网格（4 / 6 / 9 格，受难度控制）；交互态四态 —— 默认 / 按下 / 命中正确 / 命中错误。
  */
 
@@ -23,7 +24,19 @@ function chipShadow(ctx, blur, offsetY) {
   ctx.shadowOffsetY = offsetY;
 }
 
-/** 绘制中部目标区。 */
+/**
+ * 绘制中部目标区：一条横向彩色条带（= 本轮的目标颜色序列）。
+ *
+ * 三种段状态（§2.2 按序点击）：
+ *   - 已点对 → 压白降饱和，表示"这段已经走过"；
+ *   - 当前待点 → 白色粗描边 + 外发光，指出"现在该点哪一段"；
+ *   - 尚未轮到 → 保持高饱和原色。
+ *
+ * 倒计时用**条状**而非环形（§3.2 两者皆可）：序列模式下时间属于「当前段」，
+ * 横条能直观表达"每段一格时间"，且不会在宽条带上套出一个畸形的圆。
+ *
+ * @param {object} view { roundRemaining, combo, comboPop }
+ */
 function drawTarget(ctx, layout, round, view) {
   const v = view || {};
   const t = layout.target;
@@ -36,54 +49,89 @@ function drawTarget(ctx, layout, round, view) {
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('目标颜色', t.cx, layout.mid.y + 16);
+  ctx.fillText('目标颜色序列', t.cx, layout.mid.y + 16);
 
-  const size = t.size;
-  const x = t.cx - size / 2;
-  const y = t.cy - size / 2;
+  const seq = round ? round.targetIds : null;
+  const n = seq ? seq.length : 0;
+  const cleared = round ? Math.min(round.seqIndex, n) : 0;
+  const x = t.cx - t.bandW / 2;
+  const y = t.cy - t.bandH / 2;
+  const segW = n > 0 ? t.bandW / n : t.bandW;
 
-  // 目标色块：高饱和填充 + 白色厚描边 + 顶部玻璃高光
+  // 条带整体投影（浅底上靠柔和灰蓝投影托起）
   ctx.save();
   chipShadow(ctx, 20, 8);
-  ctx.fillStyle = round ? hexOf(round.targetId) : '#8FA3C0';
-  roundRect(ctx, x, y, size, size, t.radius);
+  ctx.fillStyle = '#8FA3C0';
+  roundRect(ctx, x, y, t.bandW, t.bandH, t.radius);
   ctx.fill();
   ctx.restore();
 
-  ctx.save();
-  roundRect(ctx, x, y, size, size, t.radius);
-  ctx.clip();
-  ctx.globalAlpha = 0.2;
-  ctx.fillStyle = '#FFFFFF';
-  roundRect(ctx, x + size * 0.08, y + size * 0.06, size * 0.84, size * 0.34, t.radius * 0.7);
-  ctx.fill();
-  ctx.restore();
+  if (n > 0) {
+    // 逐段填色：clip 到圆角内，段落用 fillRect + 1px 冗余避免出现细缝
+    ctx.save();
+    roundRect(ctx, x, y, t.bandW, t.bandH, t.radius);
+    ctx.clip();
+    ctx.lineCap = 'butt';
+    for (let i = 0; i < n; i += 1) {
+      ctx.fillStyle = hexOf(seq[i]);
+      ctx.fillRect(x + i * segW, y, Math.ceil(segW) + 1, t.bandH);
+    }
+    if (cleared > 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.fillRect(x, y, segW * cleared, t.bandH);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 3;
+    for (let i = 1; i < n; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(x + i * segW, y + 4);
+      ctx.lineTo(x + i * segW, y + t.bandH - 4);
+      ctx.stroke();
+    }
+    // 顶部玻璃高光
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#FFFFFF';
+    roundRect(ctx, x + t.bandW * 0.03, y + t.bandH * 0.06, t.bandW * 0.94, t.bandH * 0.3, t.radius * 0.7);
+    ctx.fill();
+    ctx.restore();
 
-  ctx.strokeStyle = '#FFFFFF';
-  ctx.lineWidth = 4;
-  roundRect(ctx, x + 2, y + 2, size - 4, size - 4, t.radius);
-  ctx.stroke();
+    // 条带整体白描边
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 4;
+    roundRect(ctx, x + 2, y + 2, t.bandW - 4, t.bandH - 4, t.radius);
+    ctx.stroke();
 
-  // 环形倒计时（剩余比例 1 → 0，颜色由绿渐变到红）
+    // 当前待点段：白色粗描边 + 外发光
+    if (cleared < n) {
+      ctx.save();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 6;
+      ctx.shadowColor = 'rgba(255,255,255,0.95)';
+      ctx.shadowBlur = 18;
+      roundRect(ctx, x + cleared * segW + 2, y + 2, Math.max(8, segW - 4), t.bandH - 4, t.radius * 0.6);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 当前段的剩余时间（条状，颜色由绿渐变到红）
   const remaining = v.roundRemaining === undefined ? 1 : Math.max(0, Math.min(1, v.roundRemaining));
-  const ringR = size / 2 + 22;
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.beginPath();
-  ctx.arc(t.cx, t.cy, ringR, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = remaining > 0.5 ? MACARON.win : remaining > 0.25 ? MACARON.warn : MACARON.lose;
-  ctx.beginPath();
-  ctx.arc(t.cx, t.cy, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * remaining);
-  ctx.stroke();
+  const barH = 12;
+  const barY = y + t.bandH + 20;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  roundRect(ctx, x, barY, t.bandW, barH, barH / 2);
+  ctx.fill();
+  if (remaining > 0) {
+    ctx.fillStyle = remaining > 0.5 ? MACARON.win : remaining > 0.25 ? MACARON.warn : MACARON.lose;
+    roundRect(ctx, x, barY, Math.max(barH, t.bandW * remaining), barH, barH / 2);
+    ctx.fill();
+  }
 
   // 连击提示（命中时数字弹跳放大由渲染层按 comboPop 缩放）
   if (v.combo > 0) {
     const pop = 1 + Math.max(0, Math.min(0.6, v.comboPop || 0));
     ctx.save();
-    ctx.translate(t.cx, y - 36);
+    ctx.translate(t.cx, y - 38);
     ctx.scale(pop, pop);
     drawOutlinedText(ctx, `连击 ×${v.combo}`, 0, 0, {
       font: 'bold 26px sans-serif',
@@ -100,7 +148,11 @@ function drawTarget(ctx, layout, round, view) {
   ctx.font = '15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('点下方同色块', t.cx, t.cy + ringR + 12);
+  ctx.fillText(
+    n > 0 ? `按顺序点下方同色块（${cleared}/${n}）` : '按顺序点下方同色块',
+    t.cx,
+    barY + barH + 10,
+  );
 }
 
 /**

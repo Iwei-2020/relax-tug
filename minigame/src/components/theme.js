@@ -10,6 +10,8 @@
  * 目标分辨率基准：750×1334（§3.4），运行期按真机尺寸自适应。
  */
 
+const { SEQUENCE_LENGTH } = require('../config/config.js');
+
 /**
  * 首页配色（对齐视觉稿：亮蓝天空 + 暖色高光 CTA + 彩色糖果点缀）。
  *
@@ -200,12 +202,14 @@ function computeLayout(sysInfo) {
       barW: Math.round((width - 48 - GAP) / 2),
       barH: 14,
     },
-    // 中部目标区
+    // 中部目标区：一条横向彩色条带（§2.2 / §3.2：目标是一段一段的颜色序列）
+    // 宽度受三处约束：屏宽 84%、中部高度的 92%、以及「每段不超过 132 px」。
     target: {
-      size: Math.min(Math.round(width * 0.46), Math.round(mid.h * 0.5)),
       cx: Math.round(width / 2),
-      cy: Math.round(mid.y + mid.h * 0.52),
-      radius: 20,
+      cy: Math.round(mid.y + mid.h * 0.5),
+      bandW: Math.min(Math.round(width * 0.84), Math.round(mid.h * 0.92), SEQUENCE_LENGTH * 132),
+      bandH: Math.round(Math.min(width * 0.84 * 0.32, mid.h * 0.4)),
+      radius: 22,
     },
     // 底部候选面板
     bottomArea: {

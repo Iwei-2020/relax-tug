@@ -15,6 +15,7 @@
 const {
   HIT_ENERGY,
   COMBO_BONUS_MAX,
+  SEQUENCE_LENGTH,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
   GAME_HARD_LIMIT_MS,
@@ -73,9 +74,15 @@ function validate(payload) {
     if (p.displacementPx !== expectedPx) errors.push('位移与能量不一致');
   }
 
-  // 轮次一致性：命中 + 失误 + 空轮
+  // 轮次一致性（§2.2 目标为 N 段颜色序列）：
+  //   每轮必然以「走完序列 / 点错 / 超时 / 硬上限截断」之一结束，且：
+  //     · 一轮最多贡献 N 次命中（上界）；
+  //     · 未以失误/空轮结束的轮次（走完序列或截断）至少贡献 1 次命中（下界）。
+  //   注意：下界**不能**写成「走完的轮数 × N」——硬上限截断的轮次不足 N 段，会把合法上报误判为篡改。
   if (isInt(p.rounds) && isInt(p.hits) && isInt(p.misses) && isInt(p.timeouts)) {
-    if (p.rounds !== p.hits + p.misses + p.timeouts) errors.push('rounds 与命中/失误/空轮之和不一致');
+    const clean = p.rounds - p.misses - p.timeouts; // 非「失误/空轮」结束的轮次
+    if (clean < 0) errors.push('rounds 小于失误与空轮之和，口径不一致');
+    else if (p.hits < clean || p.hits > p.rounds * SEQUENCE_LENGTH) errors.push('hits 与轮次/序列长度不一致');
   }
 
   return { ok: errors.length === 0, errors };

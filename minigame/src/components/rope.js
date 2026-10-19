@@ -191,21 +191,6 @@ function drawRope(ctx, layout, view) {
   drawFigure(ctx, r.leftAnchor - 10, r.y - 6, MACARON.ourDeep, 1, lean);
   drawFigure(ctx, r.rightAnchor + 10, r.y - 6, MACARON.oppDeep, -1, -lean);
 
-  // 倒计时（开局阶段：浅色蒙层 + 描边渐变大字）
-  if (v.phase === 'countdown') {
-    const seconds = Math.max(1, Math.ceil((v.countdownLeftMs || 0) / 1000));
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(0, 0, W, layout.height);
-    drawOutlinedText(ctx, String(seconds), W / 2, layout.height / 2, {
-      font: 'bold 92px sans-serif',
-      fill: '#FF9E4A',
-      outline: '#FFFFFF',
-      outlineWidth: 10,
-      glow: 'rgba(255,158,74,0.5)',
-      glowBlur: 16,
-    });
-  }
-
   // 即将越线：靠近我方 → 暖色描边脉冲；对手靠近 → 警示描边
   if (px >= r.maxPx * 0.8) {
     ctx.strokeStyle = 'rgba(255,180,61,0.75)';
@@ -218,4 +203,28 @@ function drawRope(ctx, layout, view) {
   }
 }
 
-module.exports = { drawRope };
+/**
+ * 开局倒计时浮层（整屏浅色蒙层 + 描边渐变大字）。
+ *
+ * **必须由场景在全屏最上层调用**（见 scenes/battle.js 的绘制顺序）。
+ * 早期版本把它画在 drawRope 内部，导致中部/底部玻璃面板与目标色块后画、
+ * 盖住蒙层和数字，倒计时看上去"没置顶"。
+ * @param {object} view { phase, countdownLeftMs }
+ */
+function drawCountdown(ctx, layout, view) {
+  const v = view || {};
+  if (v.phase !== 'countdown') return;
+  const seconds = Math.max(1, Math.ceil((v.countdownLeftMs || 0) / 1000));
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillRect(0, 0, layout.width, layout.height);
+  drawOutlinedText(ctx, String(seconds), layout.width / 2, layout.height / 2, {
+    font: 'bold 92px sans-serif',
+    fill: '#FF9E4A',
+    outline: '#FFFFFF',
+    outlineWidth: 10,
+    glow: 'rgba(255,158,74,0.5)',
+    glowBlur: 16,
+  });
+}
+
+module.exports = { drawRope, drawCountdown };

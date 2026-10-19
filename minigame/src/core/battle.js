@@ -18,7 +18,7 @@ const {
   MATCH_TIMEOUT_MS,
 } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout, displacement, finalResult } = require('./energy.js');
-const { createRound, judge } = require('./matcher.js');
+const { createRound, currentTargetId, judge } = require('./matcher.js');
 const { createGhost, stepGhost } = require('./ghost.js');
 
 /**
@@ -62,53 +62,70 @@ function beginPlaying(match) {
 
 /**
  * 刷新下一轮（轮间停顿结束后调用）。
+ *
+ * 守卫：当前序列**未走完**时不刷新 —— 序列化之后「一轮」要按段推进，
+ * 若无条件替换 round，会把剩余段直接丢掉、把半途的推进变成隐形的空轮。
  * @param {object} match 对局状态
  * @param {() => number} rand 伪随机源
  */
 function nextRound(match, rand) {
   if (match.phase !== 'playing') return match;
+  if (match.round && !match.round.done) return match;
   return { ...match, round: createRound(match.difficulty, rand), roundElapsedMs: 0 };
 }
 
 /**
- * 结算一轮：玩家操作与对手产出在同一轮内一并推进（异步实时体感）。
+ * 结算一次操作（玩家操作与对手产出在同一段内一并推进，异步实时体感）。
  *
- * 一轮只结算一次：**首次点击即结束本轮**（命中/点错），窗口内无操作则以空轮结束
- * （§6.2「空轮不计能量」）。这样每轮 ↔ 一次命中口径一一对应，与 §2.4 能量公式一致；
- * 玩家仍可在窗口内快速连点，那是「每轮各一次」的连续点击。
+ * 一次操作 = 结算序列中的**一段**：点对则推进到下一段（本轮继续，窗口由表现层重置），
+ * 走完最后一段 / 点错 / 超时则本轮结束（roundIndex +1），随后由表现层停顿并刷新下一轮。
+ * 这样「每段 ↔ 一次命中」与 §2.4 能量公式一一对应，玩家在窗口内快速连点即为「逐段各一次」。
  *
  * @param {object} match 对局状态
- * @param {string|null} clickedId 玩家点击的候选色 id；`null` = 空轮（窗口超时未操作）
- * @param {number} dtMs 本轮耗时（用于对局计时与硬上限判定）
+ * @param {string|null} clickedId 玩家点击的候选色 id；`null` = 本段超时未操作
+ * @param {number} dtMs 本段耗时（用于对局计时与硬上限判定）
  * @param {() => number} rand 伪随机源
  * @returns {object} 新对局状态（含 lastRound 供 UI 做命中/失误反馈）
  */
 function submit(match, clickedId, dtMs, rand) {
   if (match.phase !== 'playing' || !match.round) return match;
 
+  const targetId = currentTargetId(match.round);
+  const seqLength = match.round.targetIds.length;
+  const segIndex = match.round.seqIndex;
+
   const elapsedMs = match.elapsedMs + Math.max(0, dtMs || 0);
 
-  // 我方本轮：命中吃连击加成，点错扣分并清零连击，空轮不增不减
+  // 我方本段：命中吃连击加成，点错扣分并清零连击，超时（空段）不增不减
   const timedOut = clickedId === null || clickedId === undefined;
-  const correct = timedOut ? false : judge(match.round.targetId, clickedId);
+  const correct = timedOut ? false : judge(targetId, clickedId);
   const player = timedOut ? applyTimeout(match.player) : correct ? applyHit(match.player) : applyMiss(match.player);
 
-  // 对手本轮：难度命中率 + 平衡兜底 + ±10% 浮动
+  // 对手也按「段」推进：与玩家逐段对称，序列化改动才不会打破 §6.4 的能量平衡口径
   const stepped = stepGhost(match.ghost, player.energy, rand);
   const ghost = { ...match.ghost, state: stepped.state };
+
+  // 点错/超时本轮作废，但保留已清段数（UI 用它显示「差几段」）
+  const cleared = correct ? segIndex + 1 : segIndex;
+  const timeUp = elapsedMs >= GAME_HARD_LIMIT_MS;
 
   const myEnergy = player.energy;
   const oppEnergy = ghost.state.energy;
   const px = displacement(myEnergy, oppEnergy);
-  const timeUp = elapsedMs >= GAME_HARD_LIMIT_MS;
   const result = finalResult(myEnergy, oppEnergy, timeUp);
+
+  // 对局一旦收官（越线即时结算 / 硬上限截断）就把本轮一并记为结束：
+  // 否则最后那一轮不足 N 段却仍计入「未结束」，会破坏服务端
+  // 「hits ≤ 轮次 × 序列长度」的一致性上界，误把合法上报判成篡改（见 server/lib/result.js）。
+  const roundDone = !correct || cleared >= seqLength || result !== null;
 
   return {
     ...match,
     player,
     ghost,
     elapsedMs,
-    roundIndex: match.roundIndex + 1,
+    roundIndex: roundDone ? match.roundIndex + 1 : match.roundIndex,
+    round: { ...match.round, seqIndex: cleared, done: roundDone },
     roundElapsedMs: 0,
     px,
     phase: result ? 'over' : 'playing',
@@ -117,7 +134,9 @@ function submit(match, clickedId, dtMs, rand) {
       kind: timedOut ? 'timeout' : correct ? 'hit' : 'miss',
       correct,
       clickedId: timedOut ? null : clickedId,
-      targetId: match.round.targetId,
+      targetId,
+      segIndex,
+      roundDone,
       playerGain: player.lastGain,
       ghostGain: stepped.gained,
       ghostHit: stepped.hit,

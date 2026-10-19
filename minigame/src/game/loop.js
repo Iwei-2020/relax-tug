@@ -70,9 +70,16 @@ function createGame(options) {
     ttApi.requestFrame(frame);
   }
 
-  /** 首屏触摸坐标取自 tt 事件的 clientX/clientY（已是逻辑像素，画布铺满屏幕） */
+  /**
+   * 首屏触摸坐标取自 tt 事件的 clientX/clientY（已是逻辑像素，画布铺满屏幕）。
+   * 注意：**touchend 时 `touches` 为空数组**，抬起点只在 `changedTouches` 里，
+   * 因此这里优先取 `touches`，为空时回落到 `changedTouches`——否则抬起事件拿不到坐标，
+   * 依赖 onTouchEnd 的按钮（首页「开始对战」、结算页三处入口）会全部无响应。
+   */
   function touchPoint(event) {
-    const t = event && event.touches && event.touches[0];
+    if (!event) return null;
+    const list = event.touches && event.touches.length ? event.touches : event.changedTouches;
+    const t = list && list[0];
     if (!t) return null;
     const x = typeof t.clientX === 'number' ? t.clientX : t.x;
     const y = typeof t.clientY === 'number' ? t.clientY : t.y;

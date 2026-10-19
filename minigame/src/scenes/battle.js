@@ -12,7 +12,7 @@
 
 const { MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
-const { drawRope } = require('../components/rope.js');
+const { drawRope, drawCountdown } = require('../components/rope.js');
 const { drawTarget, drawPalette, hitTest } = require('../components/palette.js');
 const { createRng } = require('../core/rng.js');
 const {
@@ -66,12 +66,21 @@ function createBattleScene(options) {
 
   track(EVENTS.MATCH_START, { difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
 
-  /** 结算一轮后立即进入轮间停顿；若对局已结束则启动结束延时。 */
+  /**
+   * 结算序列中的**一段**：
+   *   - 点对且未走完 → 本轮继续（窗口按段重置为满，不等停顿，节奏连贯）；
+   *   - 点对且走完最后一段 / 点错 / 超时 → 本轮结束（进入轮间停顿）；
+   *   - 对局已结束 → 启动结束延时，交给结算页。
+   */
   function resolve(clickedId) {
-    const before = match.roundIndex;
+    const beforeRound = match.roundIndex;
+    const beforeSeq = match.round ? match.round.seqIndex : 0;
     match = submit(match, clickedId, spentMs, rand);
     spentMs = 0;
-    if (match.roundIndex === before) return; // 未发生结算（无当前轮）
+
+    const seqAdvanced = match.round ? match.round.seqIndex > beforeSeq : false;
+    const roundEnded = match.roundIndex !== beforeRound;
+    if (!seqAdvanced && !roundEnded) return; // 未发生结算（无当前轮）
 
     const last = match.lastRound;
     if (last.kind === 'hit') {
@@ -90,7 +99,8 @@ function createBattleScene(options) {
     if (isOver(match)) {
       endDelayMs = END_DELAY_MS;
     } else {
-      gapLeftMs = ROUND_GAP_MS;
+      roundLeftMs = match.round.windowMs; // 每段一格时间：推进到下一段或新轮都重置为满
+      if (roundEnded) gapLeftMs = ROUND_GAP_MS;
     }
   }
 
@@ -162,13 +172,16 @@ function createBattleScene(options) {
       // 马卡龙天空打底（三分区面板叠在其上，与首页同一套观感）
       decor.drawSky(ctx, layout, cache, MACARON);
 
-      drawRope(ctx, layout, {
+      // 顶部拔河视图的共享入参（一帧只建一次，供拔河与倒计时浮层复用）
+      const ropeView = {
         px: match.px,
         myEnergy: match.player.energy,
         oppEnergy: match.ghost.state.energy,
         phase: match.phase,
         countdownLeftMs: match.phase === 'countdown' ? match.countdownLeftMs : 0,
-      });
+      };
+
+      drawRope(ctx, layout, ropeView);
 
       drawTarget(ctx, layout, match.round, {
         roundRemaining: match.round && roundLeftMs > 0 ? roundLeftMs / match.round.windowMs : 0,
@@ -195,6 +208,9 @@ function createBattleScene(options) {
       ctx.textAlign = 'right';
       ctx.textBaseline = 'top';
       ctx.fillText(`${leftSec}s`, W - 24, layout.rope.barY + 26);
+
+      // 倒计时浮层：必须最后画，盖住三分区面板与目标色块（§4.1 开局 3-2-1）
+      drawCountdown(ctx, layout, ropeView);
     },
 
     onTouchStart(x, y) {

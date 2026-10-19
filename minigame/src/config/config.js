@@ -31,6 +31,11 @@ const CONFIG = {
   comboHighFrom: 8, // 「连击 8 次及以上，每次额外 +6」的起始点
   comboBonusMax: 6, // 单次命中最高加成（12 + 6 = 18）
 
+  /* ── §2.2 目标颜色序列 ────────────────────────────────────────── */
+  // 一轮 = 一条 N 段颜色序列，玩家需按序逐段点中；固定 3 段（每段仍享 §6.4 的输入窗口）。
+  // 序列内颜色互不重复 → 底部候选面板中每个目标色恰好一块，保留「唯一且明确」的正确答案（§3.2）。
+  sequenceLength: 3,
+
   /* ── §6.3 对局时长 ───────────────────────────────────────────── */
   countdownMs: 3000, // 开局 3-2-1
   roundGapMs: 150, // 轮次刷新停顿上限（保持节奏连贯）
@@ -95,6 +100,8 @@ module.exports = {
   COMBO_BONUS: CONFIG.comboBonus,
   COMBO_HIGH_FROM: CONFIG.comboHighFrom,
   COMBO_BONUS_MAX: CONFIG.comboBonusMax,
+
+  SEQUENCE_LENGTH: CONFIG.sequenceLength,
 
   COUNTDOWN_MS: CONFIG.countdownMs,
   ROUND_GAP_MS: CONFIG.roundGapMs,

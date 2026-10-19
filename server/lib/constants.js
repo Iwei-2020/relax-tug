@@ -25,6 +25,7 @@ module.exports = {
   },
   "COMBO_HIGH_FROM": 8,
   "COMBO_BONUS_MAX": 6,
+  "SEQUENCE_LENGTH": 3,
   "COUNTDOWN_MS": 3000,
   "ROUND_GAP_MS": 150,
   "MATCH_TIMEOUT_MS": 3000,
