@@ -1,0 +1,165 @@
+'use strict';
+
+/**
+ * 对局结果校验与记账（《项目说明书》§2.3 胜负规则 + §5.1 广告频次 + §5.4 服务端只做校验）
+ *
+ * 定位：**服务端权威校验**，用于
+ *   1) 反作弊：按 core 的同口径公式重算位移与能量上限，拒绝篡改上报；
+ *   2) 记账：累计胜场 / 每日首胜 / 广告频次（复活、翻倍、皮肤解锁）；
+ *   3) 供排行榜与埋点回收（§9.3 DoD：平均时长 / 命中率 / 胜负比）。
+ *
+ * 数值口径来自 server/lib/constants.js（由 tools/gen-constants.js 从小游戏 config 生成），
+ * 保证客户端与服务端**同一套数字**，不存在第二处硬编码。
+ */
+
+const {
+  HIT_ENERGY,
+  COMBO_BONUS_MAX,
+  DISPLACEMENT_FACTOR,
+  DISPLACEMENT_MAX_PX,
+  GAME_HARD_LIMIT_MS,
+  DIFFICULTY,
+  MONETIZATION,
+} = require('./constants.js');
+const { CODES, ok, fail } = require('./envelope.js');
+const { emptyCounter } = require('./store.js');
+
+/** 判定结果集合。 */
+const RESULTS = ['win', 'lose', 'draw'];
+/** 时长上报允许的宽限（客户端帧率抖动 / 结算延时）。 */
+const DURATION_SLACK_MS = 5000;
+
+/** UTC+8 的 yyyy-mm-dd（服务端记账按北京时间自然日切分）。 */
+function dayKey(nowMs) {
+  const shifted = new Date(nowMs + 8 * 3600 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+const isInt = (v) => typeof v === 'number' && Number.isInteger(v);
+
+function clampPx(value) {
+  return Math.max(-DISPLACEMENT_MAX_PX, Math.min(DISPLACEMENT_MAX_PX, value));
+}
+
+/**
+ * 校验上报的对局摘要。
+ * @returns {{ok:boolean, errors:string[]}}
+ */
+function validate(payload) {
+  const p = payload || {};
+  const errors = [];
+
+  if (!RESULTS.includes(p.result)) errors.push('result 非法');
+  if (!isInt(p.hits) || p.hits < 0) errors.push('hits 非法');
+  if (!isInt(p.misses) || p.misses < 0) errors.push('misses 非法');
+  if (!isInt(p.timeouts) || p.timeouts < 0) errors.push('timeouts 非法');
+  if (!isInt(p.bestCombo) || p.bestCombo < 0) errors.push('bestCombo 非法');
+  if (isInt(p.bestCombo) && isInt(p.hits) && p.bestCombo > p.hits) errors.push('bestCombo 超过 hits');
+  if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
+  if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
+  if (!isInt(p.durationMs) || p.durationMs < 0 || p.durationMs > GAME_HARD_LIMIT_MS + DURATION_SLACK_MS) {
+    errors.push('durationMs 非法');
+  }
+  if (DIFFICULTY[p.difficulty] === undefined) errors.push('difficulty 非法');
+
+  // 能量上限：每次命中最高 +（基础 + 最高连击加成）
+  if (isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX)) {
+    errors.push('myEnergy 超过理论上限');
+  }
+
+  // 位移必须与「双方能量差」严格一致（公式见说明书 §2.4）
+  if (isInt(p.myEnergy) && isInt(p.oppEnergy)) {
+    const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * DISPLACEMENT_FACTOR);
+    if (p.displacementPx !== expectedPx) errors.push('位移与能量不一致');
+  }
+
+  // 轮次一致性：命中 + 失误 + 空轮
+  if (isInt(p.rounds) && isInt(p.hits) && isInt(p.misses) && isInt(p.timeouts)) {
+    if (p.rounds !== p.hits + p.misses + p.timeouts) errors.push('rounds 与命中/失误/空轮之和不一致');
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * 记账并落库。
+ * @param {object} store 见 server/lib/store.js / store-cloud.js
+ * @param {string} openid 调用方身份
+ * @param {object} payload 对局摘要（core/battle.summary）
+ * @param {number} nowMs 当前时间
+ * @returns {Promise<object>} 信封
+ */
+async function recordResult(store, openid, payload, nowMs) {
+  const check = validate(payload);
+  if (!check.ok) {
+    return fail(CODES.BAD_REQUEST, check.errors.join('；'));
+  }
+  if (!openid) {
+    return fail(CODES.BAD_REQUEST, '缺少调用方身份（X-TT-OPENID）');
+  }
+
+  const day = dayKey(nowMs);
+  const isWin = payload.result === 'win';
+
+  // 档案：累计对局与胜场
+  const prevProfile = (await store.getProfile(openid)) || {
+    openid,
+    nickname: '',
+    wins: 0,
+    matches: 0,
+    createdAt: nowMs,
+  };
+  const profile = {
+    ...prevProfile,
+    matches: (prevProfile.matches || 0) + 1,
+    wins: (prevProfile.wins || 0) + (isWin ? 1 : 0),
+    updatedAt: nowMs,
+  };
+
+  // 计数：每日首胜三倍（§5.1）
+  const prevCounter = (await store.countersOf(openid, day)) || emptyCounter();
+  const firstWinToday = isWin && !prevCounter.firstWinUsed;
+  const counter = {
+    ...prevCounter,
+    match: prevCounter.match + 1,
+    win: prevCounter.win + (isWin ? 1 : 0),
+    firstWinUsed: prevCounter.firstWinUsed || isWin,
+    lastMatchAt: nowMs,
+  };
+
+  await store.saveProfile(profile);
+  await store.saveCounters(openid, day, counter);
+  await store.addResult({
+    openid,
+    day,
+    result: payload.result,
+    difficulty: payload.difficulty,
+    durationMs: payload.durationMs,
+    rounds: payload.rounds,
+    hits: payload.hits,
+    misses: payload.misses,
+    timeouts: payload.timeouts,
+    bestCombo: payload.bestCombo,
+    accuracy: payload.accuracy,
+    myEnergy: payload.myEnergy,
+    oppEnergy: payload.oppEnergy,
+    netEnergy: payload.netEnergy,
+    displacementPx: payload.displacementPx,
+    createdAt: nowMs,
+  });
+
+  return ok({
+    wins: profile.wins,
+    matches: profile.matches,
+    firstWinToday,
+    rewardMultiplier: firstWinToday ? 3 : 1, // 每日首胜三倍（§5.1）
+    daily: {
+      match: counter.match,
+      win: counter.win,
+      rewardDoubleLeft: Math.max(0, MONETIZATION.rewardDoublePerDay - counter.rewardDouble),
+      skinUnlockLeft: Math.max(0, MONETIZATION.skinUnlockPerDay - counter.skinUnlock),
+    },
+  });
+}
+
+module.exports = { RESULTS, DURATION_SLACK_MS, dayKey, validate, recordResult };

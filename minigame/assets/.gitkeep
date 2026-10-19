@@ -1,0 +1,8 @@
+# 美术资源目录（§3.4 / §5.4）
+#
+# 首版核心表现全部由原生 Canvas 绘制（components/*.js），无需位图资源；
+# 后续追加图集（TexturePacker 合图）、音效（§7.3）时放在本目录下：
+#   assets/atlas/    图集（PNG + JSON，注意：canvas 的 Image 不支持 SVG，须为位图）
+#   assets/audio/    音效与 BGM
+#
+# 约定：主包 ≤ 4MB、整体 ≤ 20MB（§5.4），大资源走分包或异步加载。

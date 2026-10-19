@@ -1,0 +1,16 @@
+{
+  "name": "relax-tug",
+  "version": "0.1.0",
+  "private": true,
+  "description": "解压拔河大作战（RelaxTug — Color Battle）· 抖音小游戏 —— 1v1 实时拔河色块对战",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "gen": "node tools/gen-constants.js && node tools/gen-cloud-functions.js",
+    "gen:check": "node tools/gen-constants.js --check && node tools/gen-cloud-functions.js --check",
+    "verify": "npm test && npm run gen:check"
+  }
+}

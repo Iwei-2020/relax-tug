@@ -1,0 +1,11 @@
+{
+  "appid": "tt241752aaba6e26de02",
+  "projectname": "relax-tug",
+  "setting": {
+    "es6": true,
+    "urlCheck": false,
+    "autoCompile": true,
+    "minified": false,
+    "postcss": false
+  }
+}
