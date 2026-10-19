@@ -31,6 +31,8 @@ const ttApi = require('../platform/tt.js');
 const END_DELAY_MS = 600;
 /** 命中/失误高亮持续时长（§7.1 即时反馈） */
 const FEEDBACK_MS = 260;
+/** 命中/失误对拔河视图的冲击反馈时长（连续命中会叠加更长的余韵，见 resolve） */
+const IMPULSE_MS = 380;
 
 /**
  * @param {object} options
@@ -62,7 +64,23 @@ function createBattleScene(options) {
   let missIndex = -1;
   let feedbackLeftMs = 0;
   let comboPop = 0;
+  // 拔河视图的动效状态：累计时间驱动待机律动，impulse 驱动命中/失误冲击
+  let tMs = 0;
+  let impulseLeftMs = 0;
+  let impulseKind = 'hit';
   const cache = {}; // 天空渐变缓存（只建一次）
+
+  // 拔河视图共享入参：一帧只复用同一个对象（避免每帧新建对象，§5.4）
+  const ropeView = {
+    px: 0,
+    myEnergy: 0,
+    oppEnergy: 0,
+    phase: 'countdown',
+    countdownLeftMs: 0,
+    tMs: 0,
+    impulse: 0,
+    impulseKind: 'hit',
+  };
 
   track(EVENTS.MATCH_START, { difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
 
@@ -96,6 +114,10 @@ function createBattleScene(options) {
     }
     feedbackLeftMs = FEEDBACK_MS;
 
+    // 拔河视图冲击：命中 → 我方拉拽爆发（连击越高余韵越长）；失误/超时 → 反向
+    impulseKind = last.kind === 'hit' ? 'hit' : 'miss';
+    impulseLeftMs = IMPULSE_MS * (last.kind === 'hit' ? 1 + Math.min(1, last.comboAfter / 10) : 1);
+
     if (isOver(match)) {
       endDelayMs = END_DELAY_MS;
     } else {
@@ -109,6 +131,10 @@ function createBattleScene(options) {
 
     update(dtMs) {
       const dt = Math.max(0, Math.min(100, dtMs)); // 夹住长帧，避免后台切回时一次结算多轮
+
+      // 待机律动时间轴 + 冲击衰减（与对局阶段无关，结算延时期间也继续动）
+      tMs += dt;
+      if (impulseLeftMs > 0) impulseLeftMs = Math.max(0, impulseLeftMs - dt);
 
       if (feedbackLeftMs > 0) {
         feedbackLeftMs -= dt;
@@ -172,14 +198,15 @@ function createBattleScene(options) {
       // 马卡龙天空打底（三分区面板叠在其上，与首页同一套观感）
       decor.drawSky(ctx, layout, cache, MACARON);
 
-      // 顶部拔河视图的共享入参（一帧只建一次，供拔河与倒计时浮层复用）
-      const ropeView = {
-        px: match.px,
-        myEnergy: match.player.energy,
-        oppEnergy: match.ghost.state.energy,
-        phase: match.phase,
-        countdownLeftMs: match.phase === 'countdown' ? match.countdownLeftMs : 0,
-      };
+      // 顶部拔河视图的共享入参（复用同一对象，供拔河与倒计时浮层共享）
+      ropeView.px = match.px;
+      ropeView.myEnergy = match.player.energy;
+      ropeView.oppEnergy = match.ghost.state.energy;
+      ropeView.phase = match.phase;
+      ropeView.countdownLeftMs = match.phase === 'countdown' ? match.countdownLeftMs : 0;
+      ropeView.tMs = tMs;
+      ropeView.impulse = impulseLeftMs / IMPULSE_MS;
+      ropeView.impulseKind = impulseKind;
 
       drawRope(ctx, layout, ropeView);
 
@@ -201,13 +228,13 @@ function createBattleScene(options) {
         ctx.stroke();
       }
 
-      // 剩余对局时间（硬上限 §6.3）
+      // 剩余对局时间（硬上限 §6.3）：居中显示在两枚阵营徽章之间
       const leftSec = Math.max(0, Math.ceil((GAME_HARD_LIMIT_MS - match.elapsedMs) / 1000));
-      ctx.fillStyle = MACARON.inkDim;
+      ctx.fillStyle = MACARON.ink;
       ctx.font = 'bold 15px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'top';
-      ctx.fillText(`${leftSec}s`, W - 24, layout.rope.barY + 26);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${leftSec}s`, W / 2, layout.rope.badge.y);
 
       // 倒计时浮层：必须最后画，盖住三分区面板与目标色块（§4.1 开局 3-2-1）
       drawCountdown(ctx, layout, ropeView);
@@ -240,6 +267,8 @@ function createBattleScene(options) {
       finished = false;
       hitIndex = -1;
       missIndex = -1;
+      impulseLeftMs = 0;
+      tMs = 0;
     },
   };
 }

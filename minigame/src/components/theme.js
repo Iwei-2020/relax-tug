@@ -88,11 +88,6 @@ const MACARON = {
   panelBorder: 'rgba(255,255,255,0.8)',
   panelGlow: 'rgba(46,102,180,0.22)',
 
-  // 赛道（顶部地面质感）
-  trackTop: '#B9ECD5',
-  trackBottom: '#8EDFBE',
-  trackLine: 'rgba(255,255,255,0.6)',
-
   // 阵营：我方暖（草莓）／对方冷（蓝莓）
   our: '#FF7BA9',
   ourDeep: '#F2517F',
@@ -107,7 +102,6 @@ const MACARON = {
   win: '#3FD0A0',
   lose: '#FF7A8A',
   warn: '#FFB43D',
-  knot: '#FFE066',
 
   // 判定线
   judge: 'rgba(255,255,255,0.9)',
@@ -117,7 +111,35 @@ const MACARON = {
   resultWin: ['#FF9DBE', '#F2517F'], // 胜利 → 我方阵营色（草莓粉）
   resultLose: ['#8FD6F8', '#2F9FDC'], // 失败 → 对方阵营色（蓝莓蓝）
   resultDraw: ['#FFD84D', '#F5921F'], // 平局 → 中性金（不代表任何一方）
+
+  /* ── 拔河区（§3.1）：天空 → 阵营地面 → 中央光圈 → 卡通小人 ──────── */
+  horizon: 'rgba(255,255,255,0.62)', // 地平线（天空与地面分界）
+  groundLeft: 'rgba(255,138,150,0.30)', // 我方侧暖色地贴
+  groundRight: 'rgba(97,194,242,0.30)', // 对方侧冷色地贴
+  groundCenter: 'rgba(255,255,255,0.62)', // 中央中性带
+  groundLine: 'rgba(255,255,255,0.28)', // 地面透视横纹
+  groundFar: 'rgba(255,255,255,0.5)', // 地面远边
+  // 阵营胶囊徽章（对齐示例图的「红方 / 蓝方」）
+  badgeOur: '#F2517F',
+  badgeOpp: '#2F9FDC',
+  // 中央发光光圈（绳结位置标记）
+  ring: '#FFB43D',
+  ringCore: '#FFFDEF',
+  ringGlow: 'rgba(255,180,61,0.55)',
+  // 卡通小人
+  skin: '#FFD9B8',
+  skinShade: '#F2C39C',
+  hair: '#3B2B24',
+  shoe: '#FFFFFF',
+  eye: '#3A4A6B',
+  blush: 'rgba(255,123,169,0.45)',
 };
+
+/** 拔河小人上衣配色（每侧 3 人，与阵营色同系）。 */
+const OUR_OUTFITS = ['#FF8A4C', '#F2517F', '#FFC24D'];
+const OPP_OUTFITS = ['#61C2F2', '#3FD0A0', '#8C9BFF'];
+/** 发色（错开，避免三胞胎观感）。 */
+const HAIRS = ['#3B2B24', '#241C16', '#6B4A2F'];
 
 /** 分区比例（§2.1）。 */
 const SPLIT = { top: 0.4, mid: 0.4, bottom: 0.2 };
@@ -181,7 +203,18 @@ function computeLayout(sysInfo) {
   // 绳子可用跨度：留出两侧小人站位，避免越线时绳子跑出屏幕
   const ropeMargin = 34;
   const maxPx = Math.min(220, Math.round((width - ropeMargin * 2) / 2) - 40);
-  const ropeY = Math.round(top.y + top.h * 0.62);
+  // 地平线在上方约 30% 处，其下为透视地面（阵营染色 + 角色站位）
+  const horizonY = Math.round(top.y + top.h * 0.3);
+  // 绳子高度：与角色肩部齐平（角色握绳的手落在肩高）
+  const ropeY = Math.round(top.y + top.h * 0.56);
+  // 能量条移到底部两侧（对齐示例图），给天空/地面/角色腾出空间
+  const barH = 20;
+  const barW = Math.round((width - 40) * 0.42);
+  const barY = Math.round(top.y + top.h - barH - 16);
+  // 阵营徽章（贴安全区上沿）
+  const badgeH = 30;
+  const badgeW = Math.round(Math.min(96, width * 0.26));
+  const badgeY = Math.round(top.y + safeTop + badgeH / 2 + 6);
 
   return {
     width,
@@ -191,16 +224,19 @@ function computeLayout(sysInfo) {
     top,
     mid,
     bottom,
-    // 顶部拔河视图
+    // 顶部拔河视图（§3.1）
     rope: {
       y: ropeY,
       cx: Math.round(width / 2),
       maxPx,
       leftAnchor: ropeMargin,
       rightAnchor: width - ropeMargin,
-      barY: top.y + safeTop + 16,
-      barW: Math.round((width - 48 - GAP) / 2),
-      barH: 14,
+      barY,
+      barW,
+      barH,
+      horizonY,
+      groundBottom: top.y + top.h,
+      badge: { w: badgeW, h: badgeH, y: badgeY },
     },
     // 中部目标区：一条横向彩色条带（§2.2 / §3.2：目标是一段一段的颜色序列）
     // 宽度受三处约束：屏宽 84%、中部高度的 92%、以及「每段不超过 132 px」。
@@ -221,4 +257,15 @@ function computeLayout(sysInfo) {
   };
 }
 
-module.exports = { HOME, MACARON, SPLIT, MIN_TOUCH, GAP, paletteGrid, computeLayout };
+module.exports = {
+  HOME,
+  MACARON,
+  SPLIT,
+  MIN_TOUCH,
+  GAP,
+  OUR_OUTFITS,
+  OPP_OUTFITS,
+  HAIRS,
+  paletteGrid,
+  computeLayout,
+};
