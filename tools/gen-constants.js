@@ -26,7 +26,7 @@ const CHECK_ONLY = process.argv.includes('--check');
 
 /**
  * 镜像字段（= 服务端真正会用到的数值）。
- * PALETTE（配色）属渲染专用，不进镜像 —— 少一份无用数据就少一处漂移面。
+ * PALETTE（配色明细）属渲染专用，不进镜像 —— 只镜像其派生标量 PALETTE_MAX；少一份无用数据就少一处漂移面。
  */
 function mirrorOf(config) {
   const {
@@ -55,6 +55,13 @@ function mirrorOf(config) {
     MONETIZATION,
     PROGRESSION,
     DAILY_TASKS,
+    LEVEL_MODE,
+    LEVEL_MAX,
+    LEVEL_LIVES,
+    SEQ_LEN_MIN,
+    SEQ_LEN_MAX,
+    CANDIDATE_TIERS,
+    PALETTE_MAX,
   } = config;
 
   return {
@@ -83,6 +90,13 @@ function mirrorOf(config) {
     MONETIZATION,
     PROGRESSION,
     DAILY_TASKS,
+    LEVEL_MODE,
+    LEVEL_MAX,
+    LEVEL_LIVES,
+    SEQ_LEN_MIN,
+    SEQ_LEN_MAX,
+    CANDIDATE_TIERS,
+    PALETTE_MAX,
   };
 }
 
@@ -97,8 +111,9 @@ function render(mirror) {
     ' * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）',
     ' *',
     ' * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。',
-    ' * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）',
-    ' * 与 §5.1（广告频次上限）。PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。',
+    ' * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）、',
+    ' * §6.7（闯关模式）与 §5.1（广告频次上限）。PALETTE（配色明细）属客户端专用，不进本镜像',
+    ' * （只镜像其派生标量 PALETTE_MAX）。',
     ' */',
     '',
   ];

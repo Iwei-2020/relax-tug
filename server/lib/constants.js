@@ -7,8 +7,9 @@
  * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）
  *
  * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。
- * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）
- * 与 §5.1（广告频次上限）。PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。
+ * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）、
+ * §6.7（闯关模式）与 §5.1（广告频次上限）。PALETTE（配色明细）属客户端专用，不进本镜像
+ * （只镜像其派生标量 PALETTE_MAX）。
  */
 module.exports = {
   "WIN_NET_ENERGY": 160,
@@ -166,5 +167,66 @@ module.exports = {
       }
     ],
     "chestCoins": 100
-  }
+  },
+  "LEVEL_MODE": {
+    "enabled": true,
+    "maxLevel": 100,
+    "lives": 3,
+    "maxRounds": 60,
+    "winNetEnergy": {
+      "from": 112,
+      "to": 72
+    },
+    "oppHitScale": 0.35,
+    "keyframes": [
+      {
+        "at": 0,
+        "tier": "easy"
+      },
+      {
+        "at": 0.34,
+        "tier": "normal"
+      },
+      {
+        "at": 0.67,
+        "tier": "hard"
+      },
+      {
+        "at": 1,
+        "tier": "hell"
+      }
+    ],
+    "roundRamp": {
+      "rounds": 8,
+      "span": 0.18
+    },
+    "seqLen": {
+      "min": 1,
+      "max": 6,
+      "from": 0,
+      "to": 0.85
+    },
+    "candidateTiers": [
+      2,
+      4,
+      6,
+      9
+    ],
+    "candidateFrom": 0,
+    "candidateTo": 0.65,
+    "sanity": {
+      "minWinNetEnergy": 40
+    }
+  },
+  "LEVEL_MAX": 100,
+  "LEVEL_LIVES": 3,
+  "SEQ_LEN_MIN": 1,
+  "SEQ_LEN_MAX": 6,
+  "CANDIDATE_TIERS": [
+    2,
+    4,
+    6,
+    9
+  ],
+  "PALETTE_MAX": 9
 };

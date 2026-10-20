@@ -142,6 +142,34 @@ const CONFIG = {
     chestCoins: 100, // 全部任务达成后可领的每日宝箱
   },
 
+  /* ── §4.8 / §6.7 闯关模式（1-100 关，V1.1 本波） ─────────────────── */
+  // 100 关**不为每关手配数值**：把 §6.4 的 4 档难度当作**关键帧**，在关卡之间连续插值（见 core/levels.js）。
+  // 「局内进度」= 同一关内随轮次从「本关入门档」爬到「本关上限档」（roundRamp）。
+  // 两个**闯关专用旋钮**（普通对战数值不变）：
+  //   · winNetEnergy 随关卡 112 → 72：叠加「3 条生命」后容错极低，阈值恒 160 会导致中高关**数学上不可通关**；
+  //   · oppHitScale = 0.35：关键帧插值出的 oppHit 再打折，让对手退化为「陪练」而非抢线的对手。
+  // 硬约束：每轮候选数 ≥ 该轮段数（由 core/levels.js#levelConfig 内部兜底）。
+  levelMode: {
+    enabled: true,
+    maxLevel: 100, // 1–100 关
+    lives: 3, // 点错目标色 / 某段超时各扣 1 条；3 条耗尽 = 闯关失败
+    maxRounds: 60, // 安全阀：防极端情况下轮次不收敛（正常由 45s 硬上限兜底）
+    winNetEnergy: { from: 112, to: 72 }, // 只与关卡有关 → 服务端可按 level 单值重算（校验用）
+    oppHitScale: 0.35, // 陪练 AI：插值出的 oppHit 再乘它，夹到 [0, 1]
+    keyframes: [ // t ∈ [0,1]，按 at 升序且首尾为 0 / 1；tier 指向 difficulty 档
+      { at: 0, tier: 'easy' },
+      { at: 0.34, tier: 'normal' },
+      { at: 0.67, tier: 'hard' },
+      { at: 1, tier: 'hell' },
+    ],
+    roundRamp: { rounds: 8, span: 0.18 }, // 关内爬坡：最迟第 8 轮由「本关入门档」爬到「本关上限档」
+    seqLen: { min: 1, max: 6, from: 0, to: 0.85 }, // 段数曲线区间（u 在 [from, to] 内线性映射到 [min, max]）
+    candidateTiers: [2, 4, 6, 9], // 候选档位（只允许这些值）
+    candidateFrom: 0, // 候选档位推进区间起点（u=0 → 档位 2）
+    candidateTo: 0.65, // 候选档位推进区间终点（u≥0.65 → 档位 9；中点就近取档）
+    sanity: { minWinNetEnergy: 40 }, // 阈值下限，防曲线被调成「一碰就赢」
+  },
+
   /* ── §3.2 / §3.3 调色板（9 色；颜色即唯一标识，禁止纯文字标色名） ── */
   palette: [
     { id: 'red', name: '红', hex: '#F44336' },
@@ -172,6 +200,16 @@ const EVENT_MAX_ENERGY_SCALE = CONFIG.events.pool.reduce(
 
 /** 每局随机事件触发上限（§6.5）：服务端校验 eventsFired 的上界。 */
 const EVENT_MAX_PER_MATCH = CONFIG.events.maxPerMatch;
+
+/** 调色板色数（§3.2 / §3.3）：候选档位的物理上限（9 色 → 最多 9 格）。 */
+const PALETTE_MAX = CONFIG.palette.length;
+
+/** 闯关模式：关卡上限 / 生命值 / 段数区间 / 候选档位（§4.8 / §6.7）。 */
+const LEVEL_MAX = CONFIG.levelMode.maxLevel;
+const LEVEL_LIVES = CONFIG.levelMode.lives;
+const SEQ_LEN_MIN = CONFIG.levelMode.seqLen.min;
+const SEQ_LEN_MAX = CONFIG.levelMode.seqLen.max;
+const CANDIDATE_TIERS = CONFIG.levelMode.candidateTiers;
 
 module.exports = {
   CONFIG,
@@ -207,4 +245,12 @@ module.exports = {
   PROGRESSION: CONFIG.progression,
   DAILY_TASKS: CONFIG.dailyTasks,
   PALETTE: CONFIG.palette,
+
+  LEVEL_MODE: CONFIG.levelMode,
+  LEVEL_MAX,
+  LEVEL_LIVES,
+  SEQ_LEN_MIN,
+  SEQ_LEN_MAX,
+  CANDIDATE_TIERS,
+  PALETTE_MAX,
 };
