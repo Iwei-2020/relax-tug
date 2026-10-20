@@ -4,12 +4,12 @@
  * 启动装配（《项目说明书》§4.1 启动页 → 首页 → 对局 → 结算）
  *
  * 唯一职责：把平台层（canvas / 输入）、渲染层（场景）、逻辑层（core）串起来，
- * 并持有**局外成长 / 每日任务**的唯一可写状态（§4.6 / §4.7）。
+ * 并持有**局外成长 / 每日任务 / 闯关进度**的唯一可写状态（§4.6 / §4.7 / §4.8）。
  * 所有跨场景跳转都在这里集中装配，**场景之间互不 import**，避免循环依赖。
  *
- * 成长与任务的权威性（§4.6 / §4.7）：
+ * 成长、任务与闯关进度的权威性（§4.6 / §4.7 / §4.8）：
  *   - 本地优先：结算 / 领奖时先用同一套纯函数更新本地存档并落盘（离线也看得到成长）；
- *   - 服务端权威：同时上报 `reportResult / dailyTasks`，成功回执携带 `progress / tasks`，
+ *   - 服务端权威：同时上报 `reportResult / dailyTasks`，成功回执携带 `progress / tasks / levels`，
  *     用它覆盖本地副本（`reconcile`），因此线上状态最终以服务端为准。
  *
  * 启动时序：创建画布 → 计算布局 → 建 game → 首屏挂首页场景 → 启动主循环 → 绑定输入。
@@ -26,10 +26,10 @@ const { createTasksScene } = require('../scenes/tasks.js');
 const { shareBattle } = require('../platform/share.js');
 const { setSinkPath, track, EVENTS } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
-const { DEFAULT_DIFFICULTY } = require('../config/config.js');
-const { dailyChallengeSeed } = require('../core/rng.js');
+const { DEFAULT_DIFFICULTY, LEVEL_MAX } = require('../config/config.js');
 const progression = require('../core/progression.js');
 const tasksCore = require('../core/tasks.js');
+const levelsCore = require('../core/levels.js');
 const saveStore = require('./save.js');
 
 /** 启动（由 minigame/game.js 调用）。 */
@@ -49,7 +49,7 @@ function boot() {
   let player = saveStore.load(Date.now());
 
   let lastMatch = null; // 最近一局快照，用于「看广告复活」续战
-  let lastOptions = {}; // 最近一次开局的模式参数（难度 / 种子 / 每日挑战标记），供「再来一局」沿用
+  let lastOptions = {}; // 最近一次开局的模式参数（模式 / 关卡 / 种子），供「再来一局」沿用
 
   /** 当前场景若支持 refresh（任务面板），数据变更后即时重绘。 */
   function refreshCurrentScene() {
@@ -59,12 +59,13 @@ function boot() {
 
   /**
    * 用服务端回执覆盖本地副本（§4.6 服务端权威）。
-   * @param {{progress?:object, tasks?:object}} data reportResult / dailyTasks 的 data
+   * @param {{progress?:object, tasks?:object, levels?:object}} data reportResult / dailyTasks 的 data
    */
   function reconcile(data) {
     if (!data) return;
     if (data.progress) player.progress = progression.normalizeProgress(data.progress);
     if (data.tasks) player.tasks = tasksCore.fromServer(data.tasks, player.tasks.day);
+    if (data.levels) player.levels = levelsCore.normalizeLevels(data.levels); // §4.8 闯关进度以服务端为准
     saveStore.persist(player);
     refreshCurrentScene();
   }
@@ -101,8 +102,8 @@ function boot() {
         onStart: () => startBattle({}),
         onShare: () => shareBattle({}),
         onChallenge: () => shareBattle({ query: 'challenge=1' }),
-        // 每日挑战（§4.4）：种子由「日期 + 难度」在客户端派生，同日同难度全球同题
-        onDaily: () => startBattle({ challenge: true, seed: dailyChallengeSeed(Date.now(), DEFAULT_DIFFICULTY) }),
+        // 闯关挑战（§4.8）：进入闯关模式（C6 起为关卡选择页；当前直进「免费可挑战关」）
+        onLevels: openLevels,
         // 每日任务（§4.7）：进入任务面板（领奖见 claimTask / claimChestReward）
         onTasks: openTasks,
       })
@@ -120,6 +121,26 @@ function boot() {
         onBack: goHome,
       })
     );
+  }
+
+  /**
+   * 进入某一关（§4.8）：种子按关卡固定派生（每关同题），模式透传为 'level'。
+   * @param {number} level 关卡号（1–100，越界自动夹取）
+   */
+  function startLevel(level) {
+    const L = levelsCore.clampLevel(level);
+    track(EVENTS.LEVEL_START, { level: L });
+    startBattle({ mode: 'level', level: L, seed: levelsCore.levelSeed(L) });
+  }
+
+  /**
+   * 进入闯关模式（§4.8）。
+   * 当前实现（C5）：直进「免费可挑战关」（已通关的最大关 + 1；全部通关则进末关）。
+   * C6 将替换为关卡选择页，由用户点选关卡（跳关需看激励视频）。
+   */
+  function openLevels() {
+    const free = levelsCore.freeLevel(player.levels);
+    startLevel(free === null ? LEVEL_MAX : free);
   }
 
   /**
@@ -160,8 +181,15 @@ function boot() {
     const award = progression.awardFor(sum);
     player.progress = progression.applyAward(player.progress, award, sum && sum.result);
     player.tasks = tasksCore.applyMatch(player.tasks, sum);
+    // §4.8 闯关进度：本地乐观推进（过关才推进），服务端权威值随后由回执覆盖
+    if (sum && sum.mode === 'level' && sum.result === 'win') {
+      player.levels = levelsCore.withClearedLevel(player.levels, sum.level);
+    }
     saveStore.persist(player);
     track(EVENTS.MATCH_SETTLED, { result: sum && sum.result, exp: award.exp, coins: award.coins });
+    if (sum && sum.mode === 'level') {
+      track(sum.result === 'win' ? EVENTS.LEVEL_CLEARED : EVENTS.LEVEL_FAILED, { level: sum.level, livesLeft: sum.livesLeft });
+    }
     cloud.reportResult(sum).then((res) => {
       if (res && res.ok && res.data) reconcile(res.data);
     });
@@ -169,17 +197,23 @@ function boot() {
 
   /**
    * 开局。
-   * @param {{resume?:object, seed?:number, challenge?:boolean}} [options]
-   *   resume：续战快照（复活用）；seed：伪随机种子（每日挑战同题局）；challenge：每日挑战标记
+   * @param {{resume?:object, seed?:number, challenge?:boolean, mode?:'classic'|'level', level?:number}} [options]
+   *   resume：续战快照（复活用）；seed：伪随机种子（闯关每关固定种子）；
+   *   challenge：每日挑战标记（§4.4 已下线，仅历史兼容）；
+   *   mode / level：对局模式与闯关关卡号（§4.8）
    */
   function startBattle(options) {
     const opts = options || {};
-    // 记住模式参数，使「再来一局」在每日挑战局后仍回到同一模式（同题重刷）
-    lastOptions = { seed: opts.seed, challenge: opts.challenge === true };
+    const mode = opts.mode === 'level' ? 'level' : 'classic';
+    const level = mode === 'level' ? opts.level : null;
+    // 记住模式参数，使「再来一局」仍回到同一模式 / 同一关（闯关同关重刷）
+    lastOptions = { mode, level, seed: opts.seed, challenge: opts.challenge === true };
     game.setScene(
       createBattleScene({
         layout,
         difficulty: DEFAULT_DIFFICULTY, // TODO(接入云函数后)：改由 matchGhost 服务端下发
+        mode,
+        level,
         seed: opts.seed,
         challenge: opts.challenge === true,
         resume: opts.resume || null,
@@ -206,12 +240,17 @@ function boot() {
   function showResult(sum, match) {
     lastMatch = match;
     settleMatch(sum); // §4.6 / §4.7：局外成长与每日任务在结算前即时落账
+    const isLevel = sum && sum.mode === 'level';
+    const lvl = sum ? sum.level : null;
     game.setScene(
       createResultScene({
         layout,
         summary: sum,
         onReplay: () => startBattle(lastOptions),
         onRevive: () => startBattle(Object.assign({}, lastOptions, { resume: lastMatch })),
+        // §4.8 闯关模式：过关 → 下一关；失败 → 重试本关；两者均无复活（口径：3 条生命）
+        onLevelNext: isLevel && lvl !== null ? () => startLevel(lvl + 1) : null,
+        onLevelRetry: isLevel && lvl !== null ? () => startLevel(lvl) : null,
         onHome: goHome,
         onShare: () => openShareCard(sum),
       })

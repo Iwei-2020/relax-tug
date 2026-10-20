@@ -90,8 +90,9 @@ function drawShareCard(ctx, rect, summary, cache) {
     glowOffsetY: 3 * k,
   });
 
-  // 4) 每日挑战角标（§4.4）
-  if (s.challengeMode) {
+  // 4) 闯关角标（§4.8）：闯关局的战绩卡标注「第 N 关」（普通对战不呈现）
+  const levelBadge = s.mode === 'level' ? `第 ${s.level || 1} 关` : '';
+  if (levelBadge) {
     const bw = 62 * k;
     const bh = 20 * k;
     ctx.save();
@@ -99,7 +100,7 @@ function drawShareCard(ctx, rect, summary, cache) {
     roundRect(ctx, x + 14 * k, y + 14 * k, bw, bh, bh / 2);
     ctx.fill();
     ctx.restore();
-    decor.drawOutlinedText(ctx, '每日挑战', x + 14 * k + bw / 2, y + 14 * k + bh / 2, {
+    decor.drawOutlinedText(ctx, levelBadge, x + 14 * k + bw / 2, y + 14 * k + bh / 2, {
       font: `bold ${Math.round(10 * k)}px sans-serif`,
       fill: '#FFFFFF',
     });

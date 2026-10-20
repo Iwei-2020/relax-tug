@@ -10,7 +10,7 @@
  * 触摸：底部候选面板首次点击即结算本轮；命中/失误反馈由 core 返回的 lastRound 驱动。
  */
 
-const { MACARON } = require('../components/theme.js');
+const { HOME, MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { roundRect } = require('../components/shape.js');
 const { drawRope, drawCountdown } = require('../components/rope.js');
@@ -25,7 +25,7 @@ const {
   summary,
 } = require('../core/battle.js');
 const { activeEvent } = require('../core/events.js');
-const { ROUND_GAP_MS, GAME_HARD_LIMIT_MS } = require('../config/config.js');
+const { ROUND_GAP_MS, GAME_HARD_LIMIT_MS, LEVEL_LIVES } = require('../config/config.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 const ttApi = require('../platform/tt.js');
 
@@ -40,12 +40,72 @@ const PERFECT_MS = 500;
 /** 随机事件触发时的横幅脉冲时长（§7.1：顶部弹出事件横幅 + 淡入缩放脉冲） */
 const EVENT_POP_MS = 700;
 
+/** 闯关 HUD 几何（§4.8）：左上「第 N 关」胶囊 + 右上「剩余生命」点阵。 */
+const HUD_PAD = 14;
+const HUD_H = 26;
+const HUD_PILL_W = 96;
+const HUD_DOT_R = 6;
+const HUD_DOT_GAP = 20;
+
+/**
+ * 闯关模式 HUD（§4.8）：左上「第 N 关」，右上「生命」+ 点阵（剩余实心 / 已失空心）。
+ * 绘在**中部面板顶部的空白带**，不遮挡拔河视图的阵营徽章与目标色带。
+ */
+function drawLevelHud(ctx, layout, match) {
+  const y = Math.round(layout.mid.y + 10);
+  const my = y + HUD_H / 2;
+
+  // 关卡胶囊（白色磨砂 + 金色描边，与首页「闯关挑战」同色系）
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  roundRect(ctx, HUD_PAD, y, HUD_PILL_W, HUD_H, HUD_H / 2);
+  ctx.fill();
+  ctx.strokeStyle = HOME.gold;
+  ctx.lineWidth = 3;
+  roundRect(ctx, HUD_PAD + 1.5, y + 1.5, HUD_PILL_W - 3, HUD_H - 3, HUD_H / 2 - 1.5);
+  ctx.stroke();
+  ctx.fillStyle = MACARON.ink;
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`第 ${match.level} 关`, HUD_PAD + HUD_PILL_W / 2, my + 1);
+  ctx.restore();
+
+  // 剩余生命点阵（自右向左：实心 = 剩余，空心 = 已失）
+  const left = Math.max(0, Math.min(LEVEL_LIVES, match.livesLeft === null ? 0 : match.livesLeft));
+  const dotCount = LEVEL_LIVES;
+  ctx.save();
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = MACARON.inkDim;
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText('生命', layout.width - HUD_PAD - (dotCount - 1) * HUD_DOT_GAP - HUD_DOT_R * 2 - 6, my + 1);
+  for (let i = 0; i < dotCount; i += 1) {
+    const x = layout.width - HUD_PAD - HUD_DOT_R - i * HUD_DOT_GAP;
+    if (i < left) {
+      ctx.fillStyle = MACARON.ourDeep;
+      ctx.beginPath();
+      ctx.arc(x, my, HUD_DOT_R, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = 'rgba(58,74,107,0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, my, HUD_DOT_R - 1, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 /**
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {string} [options.difficulty] 难度档（服务端下发失败时用本地默认档兜底）
- * @param {number} [options.seed] 伪随机种子（每日挑战同题局 / 测试 / 回放用）
- * @param {boolean} [options.challenge] 是否每日挑战局（§4.4：结算摘要打 challengeMode 标记）
+ * @param {number} [options.seed] 伪随机种子（闯关每关固定种子 / 测试 / 回放用）
+ * @param {boolean} [options.challenge] 是否每日挑战局（§4.4 已下线，仅历史兼容）
+ * @param {'classic'|'level'} [options.mode] 对局模式（§4.8：'level' 为闯关模式）
+ * @param {number} [options.level] 闯关关卡号（mode === 'level' 时生效，1–100）
  * @param {object} [options.resume] 续战快照（看广告复活用：保留双方已积攒能量）
  * @param {(summary:object, match:object) => void} options.onFinish 对局结束回调
  */
@@ -56,7 +116,7 @@ function createBattleScene(options) {
 
   // 续战（§5.1 失败复活）：保留能量与连击，仅把阶段复位为对局中并等一轮刷新
   const resumed = opts.resume && opts.resume.phase ? { ...opts.resume, phase: 'playing', result: null, countdownLeftMs: 0 } : null;
-  let match = resumed || createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true });
+  let match = resumed || createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true, mode: opts.mode, level: opts.level });
   let roundLeftMs = 0;
   let gapLeftMs = resumed ? ROUND_GAP_MS : 0;
   let endDelayMs = 0;
@@ -92,7 +152,7 @@ function createBattleScene(options) {
     impulseKind: 'hit',
   };
 
-  track(EVENTS.MATCH_START, { difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
+  track(EVENTS.MATCH_START, { mode: match.mode, level: match.level, difficulty: match.difficulty, phase: resumed ? 'resume' : 'countdown' });
 
   /**
    * 轮间刷新：把「窗口重置 + 随机事件播报」合并到一处（§6.5 触发检查点在轮间）。
@@ -309,6 +369,9 @@ function createBattleScene(options) {
       ctx.textBaseline = 'middle';
       ctx.fillText(`${leftSec}s`, W / 2, layout.rope.badge.y);
 
+      // 闯关模式 HUD（§4.8）：关卡号 + 剩余生命（普通对战不呈现）
+      if (match.mode === 'level') drawLevelHud(ctx, layout, match);
+
       // 倒计时浮层：必须最后画，盖住三分区面板与目标色块（§4.1 开局 3-2-1）
       drawCountdown(ctx, layout, ropeView);
     },
@@ -331,9 +394,9 @@ function createBattleScene(options) {
       return match;
     },
 
-    /** 复位到倒计时（重开一局时复用同一难度与模式标记）。 */
+    /** 复位到倒计时（重开一局时复用同一难度与模式）。 */
     reset() {
-      match = createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true });
+      match = createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true, mode: opts.mode, level: opts.level });
       roundLeftMs = 0;
       gapLeftMs = 0;
       endDelayMs = 0;

@@ -11,7 +11,7 @@
  * drawOutlinedText / drawGlassPanel`，与对局页、结算页共用同一套马卡龙观感。
  *
  * 交互：中央大按钮「开始对战」（主 CTA）；副入口「分享战绩 / 挑战好友」；
- * 其下「每日挑战」金色胶囊（§4.4 固定种子同题局）；卡片显示我方昵称与当前胜场。
+ * 其下「闯关挑战」金色胶囊（§4.8 闯关模式：进入关卡选择页）；卡片显示我方昵称与当前胜场。
  * 3 秒看懂、一次点击即开局（§1.4 秒懂玩法）。
  *
  * 热区约束（§2.1）：所有可点击区域按最小 88×88 逻辑像素做命中扩展，
@@ -50,10 +50,10 @@ function computeHomeLayout(layout) {
   const share = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(subCy - subH / 2), w: subW, h: subH };
   const challenge = { x: Math.round(cx + subGap / 2), y: Math.round(subCy - subH / 2), w: subW, h: subH };
 
-  // 第三行（§4.4 每日挑战 + §4.7 每日任务）：沿用次级胶囊的双列几何，置于两个胶囊之下；
+  // 第三行（§4.8 闯关挑战 + §4.7 每日任务）：沿用次级胶囊的双列几何，置于两个胶囊之下；
   // 矮屏时下移到「与上方胶囊触摸区刚好不重叠」的位置
   const row2Cy = Math.max(Math.round(H * 0.802), subCy + MIN_TOUCH);
-  const daily = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
+  const levels = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
   const tasks = { x: Math.round(cx + subGap / 2), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
 
   return {
@@ -68,12 +68,12 @@ function computeHomeLayout(layout) {
     winsFont: Math.round(Math.min(W * 0.045, 19)),
     ctaFont: Math.round(Math.min(W * 0.102, 40)),
     pillFont: Math.round(Math.min(W * 0.056, 22)),
-    dailyFont: Math.round(Math.min(W * 0.05, 20)),
+    row2Font: Math.round(Math.min(W * 0.05, 20)),
     card,
     main,
     share,
     challenge,
-    daily,
+    levels,
     tasks,
   };
 }
@@ -106,7 +106,7 @@ function titleGradient(ctx, L, cache) {
  * @param {() => void} options.onStart 点击「开始对战」
  * @param {() => void} [options.onShare] 点击「分享战绩」
  * @param {() => void} [options.onChallenge] 点击「挑战好友」
- * @param {() => void} [options.onDaily] 点击「每日挑战」（§4.4）
+ * @param {() => void} [options.onLevels] 点击「闯关挑战」（§4.8 进入关卡选择页）
  * @param {() => void} [options.onTasks] 点击「每日任务」（§4.7）
  * @param {{nickname?:string, wins?:number, level?:number, rankName?:string, coins?:number,
  *          tasksClaimable?:number}} [options.profile] 我方资料（本地存档 + 服务端对账后填充）
@@ -120,7 +120,7 @@ function createHomeScene(options) {
   const hitMain = touchRect(L.main);
   const hitShare = touchRect(L.share);
   const hitChallenge = touchRect(L.challenge);
-  const hitDaily = touchRect(L.daily);
+  const hitLevels = touchRect(L.levels);
   const hitTasks = touchRect(L.tasks);
   let pressed = null;
   let tMs = 0;
@@ -130,7 +130,7 @@ function createHomeScene(options) {
     if (hit(hitMain, x, y)) return 'main';
     if (hit(hitShare, x, y)) return 'share';
     if (hit(hitChallenge, x, y)) return 'challenge';
-    if (hit(hitDaily, x, y)) return 'daily';
+    if (hit(hitLevels, x, y)) return 'levels';
     if (hit(hitTasks, x, y)) return 'tasks';
     return null;
   }
@@ -215,17 +215,17 @@ function createHomeScene(options) {
         fill: HOME.violetFill,
         pressed: pressed === 'challenge',
       });
-      decor.drawPillButton(ctx, L.daily, {
-        label: '每日挑战',
-        font: `bold ${L.dailyFont}px sans-serif`,
+      decor.drawPillButton(ctx, L.levels, {
+        label: '闯关挑战',
+        font: `bold ${L.row2Font}px sans-serif`,
         border: HOME.gold,
         glow: HOME.goldGlow,
         fill: HOME.goldFill,
-        pressed: pressed === 'daily',
+        pressed: pressed === 'levels',
       });
       decor.drawPillButton(ctx, L.tasks, {
         label: '每日任务',
-        font: `bold ${L.dailyFont}px sans-serif`,
+        font: `bold ${L.row2Font}px sans-serif`,
         border: MACARON.our,
         glow: 'rgba(255,123,169,0.55)',
         fill: HOME.mintFill,
@@ -256,8 +256,8 @@ function createHomeScene(options) {
         if (typeof opts.onShare === 'function') opts.onShare();
       } else if (target === 'challenge') {
         if (typeof opts.onChallenge === 'function') opts.onChallenge();
-      } else if (target === 'daily') {
-        if (typeof opts.onDaily === 'function') opts.onDaily();
+      } else if (target === 'levels') {
+        if (typeof opts.onLevels === 'function') opts.onLevels();
       } else if (target === 'tasks') {
         if (typeof opts.onTasks === 'function') opts.onTasks();
       }

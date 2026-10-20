@@ -13,13 +13,17 @@
  * 避免误触 —— 故失败页主 CTA 为「看广告复活」，次 CTA 才是「再来一局」；
  * 胜利/平局页主 CTA 为「再来一局」，分享为次级。
  *
+ * 闯关模式分支（§4.8）：**不提供复活**（复活中途补命会破坏「3 条生命」口径）——
+ * 过关主 CTA 为「下一关」（末关为「已通关全部」，点击回首页），失败主 CTA 为「重试本关」，
+ * 次 CTA 恒为「分享战绩」，数据面板额外呈现「关卡 / 剩余生命」。
+ *
  * 结算情绪设计（§4.3）：失败页给"差一点"的措辞，最大化重开率。
  */
 
 const { HOME, MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { roundRect } = require('../components/shape.js');
-const { HIT_ENERGY, COMBO_BONUS_MAX } = require('../config/config.js');
+const { HIT_ENERGY, COMBO_BONUS_MAX, LEVEL_LIVES, LEVEL_MAX } = require('../config/config.js');
 const { createRng } = require('../core/rng.js');
 const { findEvent } = require('../core/events.js');
 const { AD_UNITS, showRewardedVideo } = require('../platform/ad.js');
@@ -41,18 +45,22 @@ function almostText(summary) {
   return '差得不多，再来一局找回场子';
 }
 
-function computeResultLayout(layout) {
+/**
+ * 结算页几何。`rowCount` 控制数据行数（普通对战 6 行、闯关模式 8 行）——
+ * 行数变化时同步收紧行高与上移面板，避免压到主 CTA。
+ */
+function computeResultLayout(layout, rowCount) {
   const W = layout.width;
   const H = layout.height;
   const cx = Math.round(W / 2);
 
+  const rows = rowCount || 6;
   const panelW = Math.round(Math.min(W * 0.836, 340));
-  const rowH = Math.round(H * 0.039); // 6 行数据（含 §4.3 新增的「完美判定」）需略收紧行高
+  const rowH = Math.round(H * (rows > 6 ? 0.033 : 0.039));
   const padH = Math.round(H * 0.022);
-  const rows = 6;
   const panel = {
     x: Math.round(cx - panelW / 2),
-    y: Math.round(H * 0.3),
+    y: Math.round(H * (rows > 6 ? 0.278 : 0.3)),
     w: panelW,
     h: rows * rowH + padH * 2,
     r: Math.round(W * 0.051),
@@ -169,8 +177,10 @@ function makeShardBurst(rng, L) {
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {object} options.summary 见 core/battle.summary
- * @param {() => void} options.onReplay 再来一局
- * @param {() => void} options.onRevive 复活续战（仅在失败页可用；由 boot 注入续战快照）
+ * @param {() => void} options.onReplay 再来一局（普通对战）
+ * @param {() => void} options.onRevive 复活续战（仅在普通对战的失败页可用；由 boot 注入续战快照）
+ * @param {() => void} [options.onLevelNext] 闯关过关 → 下一关（§4.8）
+ * @param {() => void} [options.onLevelRetry] 闯关失败 → 重试本关（§4.8）
  * @param {() => void} options.onHome 返回首页
  * @param {() => void} [options.onShare] 分享战绩
  */
@@ -178,7 +188,8 @@ function createResultScene(options) {
   const opts = options || {};
   const layout = opts.layout;
   const summary = opts.summary || {};
-  const L = computeResultLayout(layout);
+  const isLevel = summary.mode === 'level'; // §4.8 闯关模式：无复活，主 CTA 换成「下一关 / 重试本关」
+  const L = computeResultLayout(layout, isLevel ? 8 : 6);
   const cache = {};
   const hitMain = touchRect(L.main);
   const hitSecondary = touchRect(L.secondary);
@@ -186,7 +197,8 @@ function createResultScene(options) {
 
   const isLose = summary.result === 'lose';
   const isWin = summary.result === 'win';
-  const title = isWin ? '胜利' : summary.result === 'draw' ? '平局' : '失败';
+  const isFinalLevel = isLevel && (summary.level || 0) >= LEVEL_MAX; // 末关（第 100 关）过关 → 已通关全部
+  const title = isWin ? (isLevel ? '过关' : '胜利') : summary.result === 'draw' ? '平局' : isLevel ? '闯关失败' : '失败';
   const titleColors = isWin ? MACARON.resultWin : summary.result === 'draw' ? MACARON.resultDraw : MACARON.resultLose;
   const subText = isLose ? almostText(summary) : summary.result === 'draw' ? '势均力敌，再来一局决胜' : '漂亮，保持这个手感';
 
@@ -203,6 +215,28 @@ function createResultScene(options) {
     (summary.eventsFired || 0) > 0 && eventNames.length > 0
       ? `随机事件 ×${summary.eventsFired} · ${eventNames.join(' / ')}`
       : '';
+
+  // 数据面板行（§4.3；闯关模式额外呈现「关卡 / 剩余生命」）。
+  // 在场景创建时算一次，避免帧内新建数组 / 字符串（§5.4）。
+  const dataRows = isLevel
+    ? [
+        ['关卡', `第 ${summary.level || 1} 关`],
+        ['剩余生命', `${summary.livesLeft || 0} / ${LEVEL_LIVES}`],
+        ['命中次数', String(summary.hits || 0)],
+        ['完美判定', String(summary.perfectHits || 0)],
+        ['最高连击', String(summary.bestCombo || 0)],
+        ['命中率', `${Math.round((summary.accuracy || 0) * 100)}%`],
+        ['对局时长', `${((summary.durationMs || 0) / 1000).toFixed(1)}s`],
+        ['净能量差', String(summary.netEnergy || 0)],
+      ]
+    : [
+        ['命中次数', String(summary.hits || 0)],
+        ['完美判定', String(summary.perfectHits || 0)],
+        ['最高连击', String(summary.bestCombo || 0)],
+        ['命中率', `${Math.round((summary.accuracy || 0) * 100)}%`],
+        ['对局时长', `${((summary.durationMs || 0) / 1000).toFixed(1)}s`],
+        ['净能量差', String(summary.netEnergy || 0)],
+      ];
 
   let reviveUsed = false;
   let pressed = null;
@@ -313,14 +347,7 @@ function createResultScene(options) {
       }
 
       // 数据面板（§4.3）
-      const rows = [
-        ['命中次数', String(summary.hits || 0)],
-        ['完美判定', String(summary.perfectHits || 0)],
-        ['最高连击', String(summary.bestCombo || 0)],
-        ['命中率', `${Math.round((summary.accuracy || 0) * 100)}%`],
-        ['对局时长', `${((summary.durationMs || 0) / 1000).toFixed(1)}s`],
-        ['净能量差', String(summary.netEnergy || 0)],
-      ];
+      const rows = dataRows;
       decor.drawGlassPanel(ctx, L.panel);
       const rowX = L.panel.x + Math.round(L.panel.w * 0.06);
       const rowRight = L.panel.x + L.panel.w - Math.round(L.panel.w * 0.06);
@@ -345,8 +372,20 @@ function createResultScene(options) {
         }
       }
 
-      // 主 CTA（失败页 = 看广告复活，单一主 CTA，§5.1）
-      const mainLabel = isLose ? (reviveUsed ? '已使用复活' : '看广告复活') : '再来一局';
+      // 主 CTA：
+      //   普通对战失败页 = 「看广告复活」（单一主 CTA，§5.1），其余 = 「再来一局」；
+      //   闯关模式（§4.8）= 过关 →「下一关」（末关「已通关全部」），失败 →「重试本关」，均无复活。
+      const mainLabel = isLevel
+        ? isWin
+          ? isFinalLevel
+            ? '已通关全部'
+            : '下一关'
+          : '重试本关'
+        : isLose
+          ? reviveUsed
+            ? '已使用复活'
+            : '看广告复活'
+          : '再来一局';
       decor.drawCtaButton(ctx, L.main, {
         label: mainLabel,
         font: `bold ${L.ctaFont}px sans-serif`,
@@ -354,13 +393,14 @@ function createResultScene(options) {
         cache,
       });
 
-      // 次 CTA：失败页为「再来一局」，其余为「分享战绩」
+      // 次 CTA：普通对战失败页为「再来一局」（避免与「看广告复活」抢焦点），其余为「分享战绩」
+      const secondaryLabel = !isLevel && isLose ? '再来一局' : '分享战绩';
       decor.drawPillButton(ctx, L.secondary, {
-        label: isLose ? '再来一局' : '分享战绩',
+        label: secondaryLabel,
         font: `bold ${L.pillFont}px sans-serif`,
-        border: isLose ? HOME.violet : HOME.mint,
-        glow: isLose ? HOME.violetGlow : HOME.mintGlow,
-        fill: isLose ? HOME.violetFill : HOME.mintFill,
+        border: !isLevel && isLose ? HOME.violet : HOME.mint,
+        glow: !isLevel && isLose ? HOME.violetGlow : HOME.mintGlow,
+        fill: !isLevel && isLose ? HOME.violetFill : HOME.mintFill,
         pressed: pressed === 'secondary',
       });
 
@@ -405,12 +445,19 @@ function createResultScene(options) {
       pressed = null;
 
       if (wantMain) {
-        if (isLose) revive();
+        if (isLevel) {
+          // §4.8 闯关模式：过关进下一关（末关回首页），失败重试本关；不提供复活
+          if (isWin) {
+            if (isFinalLevel) {
+              if (typeof opts.onHome === 'function') opts.onHome();
+            } else if (typeof opts.onLevelNext === 'function') opts.onLevelNext();
+          } else if (typeof opts.onLevelRetry === 'function') opts.onLevelRetry();
+        } else if (isLose) revive();
         else replay();
         return;
       }
       if (wantSecondary) {
-        if (isLose) replay();
+        if (!isLevel && isLose) replay();
         else if (typeof opts.onShare === 'function') opts.onShare();
         return;
       }
