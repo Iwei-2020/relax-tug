@@ -11,6 +11,8 @@
     "test": "node --test test/*.test.js",
     "gen": "node tools/gen-constants.js && node tools/gen-cloud-functions.js",
     "gen:check": "node tools/gen-constants.js --check && node tools/gen-cloud-functions.js --check",
+    "sim": "node tools/sim-balance.js",
+    "sim:check": "node tools/sim-balance.js --check",
     "verify": "npm test && npm run gen:check"
   }
 }
