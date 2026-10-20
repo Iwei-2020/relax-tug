@@ -204,7 +204,7 @@ module.exports = {
     "maxRounds": 60,
     "winNetEnergy": {
       "from": 112,
-      "to": 72
+      "to": 74
     },
     "oppHitScale": 0.35,
     "keyframes": [
@@ -233,7 +233,7 @@ module.exports = {
       "min": 1,
       "max": 6,
       "from": 0,
-      "to": 0.85
+      "to": 1
     },
     "candidateTiers": [
       2,
@@ -242,7 +242,7 @@ module.exports = {
       9
     ],
     "candidateFrom": 0,
-    "candidateTo": 0.65,
+    "candidateTo": 1,
     "sanity": {
       "minWinNetEnergy": 40
     }
@@ -936,7 +936,7 @@ function validate(payload) {
   }
 
   // 位移必须与「双方能量差」严格一致（公式见说明书 §2.4）。
-  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→72，§6.7）；普通对战用全局系数。
+  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→74，§6.7）；普通对战用全局系数。
   if (isInt(p.myEnergy) && isInt(p.oppEnergy)) {
     const factor = isLevel && validLevel(p.level) ? levels.displacementFactorOf(p.level) : DISPLACEMENT_FACTOR;
     const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * factor);

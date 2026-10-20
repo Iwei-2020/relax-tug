@@ -175,7 +175,7 @@ module.exports = {
     "maxRounds": 60,
     "winNetEnergy": {
       "from": 112,
-      "to": 72
+      "to": 74
     },
     "oppHitScale": 0.35,
     "keyframes": [
@@ -204,7 +204,7 @@ module.exports = {
       "min": 1,
       "max": 6,
       "from": 0,
-      "to": 0.85
+      "to": 1
     },
     "candidateTiers": [
       2,
@@ -213,7 +213,7 @@ module.exports = {
       9
     ],
     "candidateFrom": 0,
-    "candidateTo": 0.65,
+    "candidateTo": 1,
     "sanity": {
       "minWinNetEnergy": 40
     }

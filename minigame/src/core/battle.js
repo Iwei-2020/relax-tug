@@ -171,7 +171,7 @@ function submit(match, clickedId, dtMs, rand) {
 
   const myEnergy = player.energy;
   const oppEnergy = ghost.state.energy;
-  // 闯关模式：位移系数按关卡派生（越线阈值 112→72，§6.7）；普通对战保持全局系数（缺省）
+  // 闯关模式：位移系数按关卡派生（越线阈值 112→74，§6.7）；普通对战保持全局系数（缺省）
   const isLevel = match.mode === 'level';
   const factor = isLevel && match.levelCfg ? match.levelCfg.displacementFactor : undefined;
   const px = displacement(myEnergy, oppEnergy, factor);

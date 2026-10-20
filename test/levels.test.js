@@ -78,15 +78,42 @@ test('锚点：levelConfig(L1, 0) 与 levelConfig(L100, 上限轮) 落在地狱 
   assert.equal(l100.candidates, 9);
   assert.equal(l100.windowMs, 1100);
   assert.equal(l100.tier, 'hell');
-  assert.equal(l100.winNetEnergy, 72);
+  assert.equal(l100.winNetEnergy, 74);
 
   // 越线阈值随关卡单调不增，且夹在 sanity 下限之上
   assert.equal(client.winNetEnergyOf(1), 112);
-  assert.equal(client.winNetEnergyOf(100), 72);
+  assert.equal(client.winNetEnergyOf(100), 74);
   assert.ok(client.winNetEnergyOf(50) < client.winNetEnergyOf(1));
   assert.ok(client.winNetEnergyOf(50) > client.winNetEnergyOf(100));
   // 位移系数 = 220 / 阈值
-  assert.ok(Math.abs(client.displacementFactorOf(100) - 220 / 72) < 1e-9);
+  assert.ok(Math.abs(client.displacementFactorOf(100) - 220 / 74) < 1e-9);
+});
+
+test('爬坡档位：段数 1–6 与候选 2/4/6/9 的推进区间（说明书 §6.7 档位区间表）', () => {
+  // seqLen：u → 1 + 5u 就近取整 → 1 段 u<0.1、2 段 [0.1,0.3)、3 段 [0.3,0.5)、4 段 [0.5,0.7)、5 段 [0.7,0.9)、6 段 ≥0.9
+  assert.equal(client.seqLenAt(0.09), 1);
+  assert.equal(client.seqLenAt(0.1), 2);
+  assert.equal(client.seqLenAt(0.29), 2);
+  assert.equal(client.seqLenAt(0.3), 3);
+  assert.equal(client.seqLenAt(0.49), 3);
+  assert.equal(client.seqLenAt(0.5), 4);
+  assert.equal(client.seqLenAt(0.69), 4);
+  assert.equal(client.seqLenAt(0.7), 5);
+  assert.equal(client.seqLenAt(0.89), 5);
+  assert.equal(client.seqLenAt(0.9), 6);
+  assert.equal(client.seqLenAt(1), 6);
+  // candidates：u → 3u 就近取档 → 2 格 u<1/6、4 格 [1/6,0.5)、6 格 [0.5,5/6)、9 格 ≥5/6
+  assert.equal(client.candidatesAt(0.16), 2);
+  assert.equal(client.candidatesAt(1 / 6), 4);
+  assert.equal(client.candidatesAt(0.49), 4);
+  assert.equal(client.candidatesAt(0.5), 6);
+  assert.equal(client.candidatesAt(5 / 6 - 0.01), 6);
+  assert.equal(client.candidatesAt(5 / 6), 9);
+  assert.equal(client.candidatesAt(1), 9);
+  // 两条曲线拉满全区间（to = 1）后，u=1 处必须同时触顶且满足「候选 ≥ 段数」
+  const top = client.levelConfig(100, 60);
+  assert.equal(top.seqLen, SEQ_LEN_MAX);
+  assert.equal(top.candidates, CANDIDATE_TIERS[CANDIDATE_TIERS.length - 1]);
 });
 
 /* ── 2. 全枚举：单调性 + 硬约束 ─────────────────────────────────── */

@@ -121,7 +121,7 @@ function validate(payload) {
   }
 
   // 位移必须与「双方能量差」严格一致（公式见说明书 §2.4）。
-  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→72，§6.7）；普通对战用全局系数。
+  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→74，§6.7）；普通对战用全局系数。
   if (isInt(p.myEnergy) && isInt(p.oppEnergy)) {
     const factor = isLevel && validLevel(p.level) ? levels.displacementFactorOf(p.level) : DISPLACEMENT_FACTOR;
     const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * factor);
