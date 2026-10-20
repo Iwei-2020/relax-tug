@@ -7,14 +7,19 @@
  * 这也是弱网兜底方案：关键逻辑本地化 + AI 兜底，服务端只做校验与排名（§5.4）。
  *
  * 命中率模型：
- *   单轮先按难度档 `oppHit` 掷骰是否命中（命中则按 §6.2 同口径吃连击加成，并加 ±10% 浮动）；
- *   未命中时，再按 `oppMiss` 掷骰决定是「点错扣分」还是「空轮不计」。
- *   最后叠加**平衡兜底**（对玩家不可见）：玩家落后 > 60 时对手命中率 -8%（连败保护），
- *   玩家领先 > 60 时 +5%（防碾压）。
+ *   **逐段**（不是每轮一次）先按难度档 `oppHit` 掷骰是否命中（命中则按 §6.2 同口径吃连击加成，
+ *   并加 ±10% 浮动）；未命中时，再按 `oppMiss` 掷骰决定是「点错扣分」还是「空轮不计」。
+ *   —— 与玩家侧**逐段对称**：玩家每点一段、AI 就在同一段掷一次骰（见核心循环 core/battle.js#submit）。
+ *   最后叠加**平衡兜底**（对玩家不可见）：玩家落后超过 0.5×越线阈值时对手命中率 -8%（连败保护），
+ *   玩家领先超过 0.5×越线阈值时 +5%（防碾压）。阈值以比例表达，随越线阈值自动跟随（§6.4）。
  */
 
-const { DIFFICULTY, DEFAULT_DIFFICULTY, BALANCE } = require('../config/config.js');
+const { DIFFICULTY, DEFAULT_DIFFICULTY, BALANCE, WIN_NET_ENERGY } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout } = require('./energy.js');
+
+/** 平衡兜底的绝对阈值 = 比例 × 越线阈值（保持「改一个数，处处跟随」）。 */
+const WIN_LEAD_THRESHOLD = BALANCE.winThresholdRatio * WIN_NET_ENERGY;
+const LOSE_LEAD_THRESHOLD = BALANCE.loseThresholdRatio * WIN_NET_ENERGY;
 
 /** 创建对手状态；非法难度 key 回落默认档。 */
 function createGhost(difficultyKey) {
@@ -36,17 +41,17 @@ function createGhost(difficultyKey) {
 function effectiveHitRate(ghost, playerEnergy) {
   const lead = playerEnergy - ghost.state.energy; // 正 = 我方领先
   let rate = ghost.oppHit;
-  if (lead > BALANCE.winThreshold) rate += BALANCE.winAid;
-  else if (lead < -BALANCE.loseThreshold) rate -= BALANCE.loseAid;
+  if (lead > WIN_LEAD_THRESHOLD) rate += BALANCE.winAid;
+  else if (lead < -LOSE_LEAD_THRESHOLD) rate -= BALANCE.loseAid;
   return Math.max(0, Math.min(1, rate));
 }
 
 /**
- * 推进对手一轮。
+ * 推进对手**一段**（一名玩家点一段 = AI 掷一次骰，逐段对称）。
  * @param {object} ghost 对手状态
  * @param {number} playerEnergy 我方当前能量（用于平衡兜底）
  * @param {() => number} rand 伪随机源
- * @returns {{state:object, gained:number, hit:boolean, hitRate:number}} 新对手状态 + 本轮净变化
+ * @returns {{state:object, gained:number, hit:boolean, hitRate:number}} 新对手状态 + 本段净变化
  */
 function stepGhost(ghost, playerEnergy, rand) {
   const hitRate = effectiveHitRate(ghost, playerEnergy);

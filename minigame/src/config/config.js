@@ -16,8 +16,9 @@
 
 const CONFIG = {
   /* ── §6.1 / §2.4 越线判定与绳子位移 ───────────────────────────── */
-  // 越线所需「净能量差」（首版按 §6.4 末尾的调优结论取 80，而非 §6.1 的 100）
-  winNetEnergy: 80,
+  // 越线所需「净能量差」。**重标定**：原值 80 时，一轮 3 段完美峰值 = 3×27 = 81 ≥ 80，
+  // 即「一轮内即可越线」，实测单局常常 <10s；本轮上调到 160（详见说明书 §6.4「对局时长目标验证」）。
+  winNetEnergy: 160,
   // 绳子中心相对屏幕中线的最大偏移（逻辑像素）
   displacementMaxPx: 220,
   // 平局判定带宽：倒计时结束且位移落在 ±20px 内判平局
@@ -49,10 +50,13 @@ const CONFIG = {
   gameHardLimitMs: 45000, // 单局硬性时长上限（超时按位移判定）
 
   /* ── §6.4 平衡兜底（对玩家不可见） ─────────────────────────────── */
+  // 阈值以**越线阈值的比例**表达（而非绝对值），随 winNetEnergy 自动跟随 —— 否则阈值上调后
+  // 兜底会退化为「几乎不触发」。当前 = 160 × 0.5 = 80（相对介入点由原来的 60/80 = 75% 提前到 50%）。
+  // winAid 保持 0.05：实测上调到 0.12 / 0.15 / 0.22 会把中位时长顶到 41s / 45s / 45s，末段锁死在硬上限。
   balance: {
-    loseThreshold: 60, // 玩家落后超过 60 → 对手命中率下调
+    loseThresholdRatio: 0.5, // 玩家落后超过 0.5 × 越线阈值 → 对手命中率下调
     loseAid: 0.08, // 连败保护：下调 8%
-    winThreshold: 60, // 玩家领先超过 60 → 对手命中率上调
+    winThresholdRatio: 0.5, // 玩家领先超过 0.5 × 越线阈值 → 对手命中率上调
     winAid: 0.05, // 防碾压：上调 5%
   },
 
@@ -75,7 +79,7 @@ const CONFIG = {
     maxPerMatch: 2, // 每局触发上限（避免局局必刷）
     firstCheckRound: 2, // 前 2 轮为热身，不打扰
     checkEveryRounds: 2, // 之后每 2 轮检查一次
-    chance: 0.45, // 每次检查的触发概率（rng 驱动）
+    chance: 0.3, // 每次检查的触发概率（rng 驱动）：单局轮数涨到 ≈18.6 后，0.45 会「局局必刷」
     durationMs: 6000, // 单个事件持续时长（按真实时间衰减）
     // 事件池：weight 为相对权重；效果字段仅允许 energyScale / windowScale / fog
     pool: [
@@ -107,7 +111,7 @@ const CONFIG = {
       expPerHit: 1, // 每命中一段
       expPerPerfect: 2, // 每完美判定一段
       coinsPerPerfect: 2, // 每完美判定一段
-      matchExpCap: 90, // 单局经验封顶（防刷）
+      matchExpCap: 120, // 单局经验封顶（防刷）：重标定后单局 ≈36 命中 / 27 完美 ≈ 110 经验，故由 90 上调
       matchCoinCap: 120, // 单局金币封顶（防刷）
       dailyExpCap: 800, // 每日经验封顶（防刷）
       dailyCoinCap: 1000, // 每日金币封顶（防刷）
@@ -131,8 +135,9 @@ const CONFIG = {
     pool: [
       { id: 'play3', name: '完成 3 局对战', metric: 'matches', mode: 'count', goal: 3, coins: 40 },
       { id: 'win2', name: '赢得 2 局', metric: 'wins', mode: 'count', goal: 2, coins: 60 },
-      { id: 'perfect10', name: '累计 10 次完美判定', metric: 'perfectHits', mode: 'sum', goal: 10, coins: 50 },
-      { id: 'combo8', name: '单局达成 8 连击', metric: 'bestCombo', mode: 'max', goal: 8, coins: 40 },
+      // 目标值随越线阈值重标定同步上调：单局命中段数由 ≈18 翻到 ≈36，原目标会在一局内达标。
+      { id: 'perfect10', name: '累计 24 次完美判定', metric: 'perfectHits', mode: 'sum', goal: 24, coins: 50 },
+      { id: 'combo8', name: '单局达成 15 连击', metric: 'bestCombo', mode: 'max', goal: 15, coins: 40 },
     ],
     chestCoins: 100, // 全部任务达成后可领的每日宝箱
   },
@@ -153,7 +158,7 @@ const CONFIG = {
 
 /* ── 派生值（保持「单一来源」：改上面的数字，这里自动跟随） ───────── */
 
-/** 位移系数 = 位移上限 / 越线净能量差（§2.4 公式）。首版 = 220 / 80 = 2.75 px/能量点。 */
+/** 位移系数 = 位移上限 / 越线净能量差（§2.4 公式）。重标定后 = 220 / 160 = 1.375 px/能量点。 */
 const DISPLACEMENT_FACTOR = CONFIG.displacementMaxPx / CONFIG.winNetEnergy;
 
 /**

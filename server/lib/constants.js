@@ -11,9 +11,9 @@
  * 与 §5.1（广告频次上限）。PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。
  */
 module.exports = {
-  "WIN_NET_ENERGY": 80,
+  "WIN_NET_ENERGY": 160,
   "DISPLACEMENT_MAX_PX": 220,
-  "DISPLACEMENT_FACTOR": 2.75,
+  "DISPLACEMENT_FACTOR": 1.375,
   "DRAW_BAND_PX": 20,
   "HIT_ENERGY": 12,
   "MISS_PENALTY": 6,
@@ -33,9 +33,9 @@ module.exports = {
   "MATCH_TIMEOUT_MS": 3000,
   "GAME_HARD_LIMIT_MS": 45000,
   "BALANCE": {
-    "loseThreshold": 60,
+    "loseThresholdRatio": 0.5,
     "loseAid": 0.08,
-    "winThreshold": 60,
+    "winThresholdRatio": 0.5,
     "winAid": 0.05
   },
   "DIFFICULTY": {
@@ -91,7 +91,7 @@ module.exports = {
       "expPerHit": 1,
       "expPerPerfect": 2,
       "coinsPerPerfect": 2,
-      "matchExpCap": 90,
+      "matchExpCap": 120,
       "matchCoinCap": 120,
       "dailyExpCap": 800,
       "dailyCoinCap": 1000
@@ -150,18 +150,18 @@ module.exports = {
       },
       {
         "id": "perfect10",
-        "name": "累计 10 次完美判定",
+        "name": "累计 24 次完美判定",
         "metric": "perfectHits",
         "mode": "sum",
-        "goal": 10,
+        "goal": 24,
         "coins": 50
       },
       {
         "id": "combo8",
-        "name": "单局达成 8 连击",
+        "name": "单局达成 15 连击",
         "metric": "bestCombo",
         "mode": "max",
-        "goal": 8,
+        "goal": 15,
         "coins": 40
       }
     ],

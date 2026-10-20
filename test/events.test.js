@@ -39,12 +39,19 @@ function curTarget(m) {
   return m.round ? m.round.targetIds[m.round.seqIndex] : null;
 }
 
+/**
+ * 单段耗时（模拟「熟练玩家快速连点」）：以固定小 dt 驱动 playOut，
+ * 使确定性用例在远低于 §6.3 硬上限（45s）的步数内收官。越线阈值重标定后单局命中段数
+ * 由 ≈18 涨到 ≈36，若沿用整段 windowMs（1400ms）作为 dt，累计耗时会贴近硬上限。
+ */
+const FAST_SEG_MS = 100;
+
 /** 把一局跑到结束（全命中）。 */
 function playOut(match, rand) {
   let m = match;
   let guard = 0;
   while (!isOver(m) && guard < 800) {
-    m = submit(m, curTarget(m), m.round ? m.round.windowMs : 1400, rand);
+    m = submit(m, curTarget(m), FAST_SEG_MS, rand);
     if (!isOver(m)) m = nextRound(m, rand);
     guard += 1;
   }
@@ -67,7 +74,7 @@ test('事件池：全部事件只做局内修饰，不含任何改变胜负条�
     }
     assert.equal(ev.winNetEnergy, undefined, '事件不得改变越线净能量差');
   }
-  assert.equal(WIN_NET_ENERGY, 80, '越线净能量差不受随机事件影响');
+  assert.equal(WIN_NET_ENERGY, 160, '越线净能量差不受随机事件影响');
   assert.equal(EVENT_MAX_ENERGY_SCALE, Math.max(...RANDOM_EVENTS.pool.map((e) => e.energyScale || 1)));
 });
 

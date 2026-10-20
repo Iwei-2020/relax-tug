@@ -40,19 +40,20 @@ function clampPx(v) {
 
 /**
  * 构造一份能通过服务端 validate 的合法对局摘要（口径同 core/battle.summary）。
- * 默认值：10 轮 / 25 命中 / 8 完美 / 无失误，默认胜利。
+ * 默认值按**重标定后**的普通档量级取（越线阈值 80 → 160 后单局命中段数近似翻倍）：
+ * 19 轮 / 36 命中 / 27 完美 / 最高连击 16 / 无失误，默认胜利。
  */
 function matchSummary(overrides) {
   const o = Object.assign(
     {
       result: 'win',
       difficulty: 'normal',
-      rounds: 10,
-      hits: 25,
-      perfectHits: 8,
+      rounds: 19,
+      hits: 36,
+      perfectHits: 27,
       misses: 0,
       timeouts: 0,
-      bestCombo: 8,
+      bestCombo: 16,
       myEnergy: 300,
       oppEnergy: 100,
       durationMs: 30000,
@@ -117,15 +118,18 @@ test('单局奖励：结果基础 + 命中 / 完美折算，并施加单局封�
   assert.equal(win.exp, 20 + 25 * 1 + 8 * 2, '胜利：20 + 命中 25 + 完美 16 = 61');
   assert.equal(win.coins, 30 + 8 * 2, '胜利：30 + 完美 16 = 46');
 
+  // 失败 / 平局：仅基础 + 命中折算（完美为 0，金币只有结果基础）；期望值按默认量级符号化，
+  // 避免重标定（命中段数 25 → 36）后硬编码数字漂移。
+  const defaultHits = matchSummary({}).hits;
   const lose = progression.awardFor(matchSummary({ result: 'lose', perfectHits: 0 }));
-  assert.equal(lose.exp, 8 + 25);
-  assert.equal(lose.coins, 10);
+  assert.equal(lose.exp, PROGRESSION.reward.expByResult.lose + defaultHits * PROGRESSION.reward.expPerHit);
+  assert.equal(lose.coins, PROGRESSION.reward.coinsByResult.lose);
 
   const draw = progression.awardFor(matchSummary({ result: 'draw', perfectHits: 0 }));
-  assert.equal(draw.exp, 12 + 25);
-  assert.equal(draw.coins, 15);
+  assert.equal(draw.exp, PROGRESSION.reward.expByResult.draw + defaultHits * PROGRESSION.reward.expPerHit);
+  assert.equal(draw.coins, PROGRESSION.reward.coinsByResult.draw);
 
-  // 单局封顶：经验随命中增长（封顶 90）；金币随完美段数增长（封顶 120）
+  // 单局封顶：经验随命中增长（封顶 matchExpCap）；金币随完美段数增长（封顶 matchCoinCap）
   const gamedExp = progression.awardFor(matchSummary({ hits: 999, perfectHits: 0 }));
   assert.equal(gamedExp.exp, PROGRESSION.reward.matchExpCap);
   const gamedCoin = progression.awardFor(matchSummary({ hits: 25, perfectHits: 200 }));
@@ -146,7 +150,7 @@ test('applyAward：累计经验 / 金币并重算等级 / 段位，累计场次�
   assert.equal(p.coins, award.coins);
   assert.equal(p.matches, 1);
   assert.equal(p.wins, 1);
-  assert.equal(p.level, 1, '61 经验还不到 2 级');
+  assert.equal(p.level, progression.levelFromExp(award.exp).level, '等级由累计经验推导');
   p = progression.applyAward(p, award, 'win');
   assert.equal(p.wins, 2, '胜场应继续累计');
   assert.equal(p.exp, award.exp * 2);
@@ -167,13 +171,14 @@ test('normalizeProgress：脏数据收敛成合法进度并重算等级 / 段位
 /* ── 3. 每日任务累计口径 ────────────────────────────────────────── */
 
 test('每日任务累计：count（每局 0/1）/ sum（累加）/ max（取最大）', () => {
+  const one = matchSummary({});
   let st = clientTasks.emptyTasks('2026-10-20');
-  st = clientTasks.applyMatch(st, matchSummary({}));
-  st = clientTasks.applyMatch(st, matchSummary({}));
+  st = clientTasks.applyMatch(st, one);
+  st = clientTasks.applyMatch(st, one);
   assert.equal(st.progress.play3, 2, 'matches 计数 +1');
   assert.equal(st.progress.win2, 2, '两局胜利 → wins 计数 2');
-  assert.equal(st.progress.perfect10, 16, 'perfectHits 累加 8 + 8');
-  assert.equal(st.progress.combo8, 8, 'bestCombo 取最大（非累加）');
+  assert.equal(st.progress.perfect10, one.perfectHits * 2, 'perfectHits 累加（两局）');
+  assert.equal(st.progress.combo8, one.bestCombo, 'bestCombo 取最大（非累加）');
 
   // 失败局：wins 不增，但 matches 仍 +1
   const before = st;
@@ -311,29 +316,38 @@ test('两端等价：UTC+8 自然日口径一致（含跨 UTC 零点）', () => 
 test('recordResult：落库成长、每日封顶生效、回执含权威进度与任务', async () => {
   const store = createMemoryStore();
   const now = Date.now();
+  const perMatchExp = progression.awardFor(matchSummary({})).exp; // 单局实发经验（未触每日封顶前）
+  const dailyCap = PROGRESSION.reward.dailyExpCap;
 
   const first = await recordResult(store, 'u1', matchSummary({}), now);
   assert.equal(first.code, 0);
-  assert.equal(first.data.award.exp, 61);
-  assert.equal(first.data.progress.exp, 61);
+  assert.equal(first.data.award.exp, perMatchExp);
+  assert.equal(first.data.progress.exp, perMatchExp);
   assert.equal(first.data.progress.wins, 1);
-  assert.equal(first.data.progress.level, 1);
+  assert.equal(first.data.progress.level, progression.levelFromExp(perMatchExp).level);
   assert.equal(first.data.tasks.tasks.find((t) => t.id === 'win2').progress, 1);
 
-  // 每日经验封顶：连打 15 局，第 14 局被削到剩余额度、第 15 局为 0
+  // 每日经验封顶：连打到额度耗尽 —— 第（partialIdx+1）局被削到剩余额度、其后再打均为 0。
+  // 局数由 cap / perMatchExp 推导，重标定后单局经验变化时无需改测试。
+  const partialIdx = Math.floor(dailyCap / perMatchExp); // 首个不满额的局（0 基）
+  const matches = partialIdx + 2; // 多打 1 局确保额度用尽
   let last = first;
   const awards = [first.data.award.exp];
-  for (let i = 0; i < 14; i += 1) {
+  for (let i = 1; i < matches; i += 1) {
     // eslint-disable-next-line no-await-in-loop
     last = await recordResult(store, 'u1', matchSummary({}), now);
     awards.push(last.data.award.exp);
   }
   const day = dayKey(now);
   const counter = await store.countersOf('u1', day);
-  assert.equal(counter.expEarned, PROGRESSION.reward.dailyExpCap, '当日经验产出封顶到 800');
-  assert.equal(awards[13], PROGRESSION.reward.dailyExpCap - 13 * 61, '第 14 局只发剩余额度');
-  assert.equal(awards[14], 0, '额度用尽后不再产出');
-  assert.equal(last.data.progress.exp, PROGRESSION.reward.dailyExpCap);
+  assert.equal(counter.expEarned, dailyCap, `当日经验产出封顶到 ${dailyCap}`);
+  if (dailyCap % perMatchExp === 0) {
+    assert.equal(awards[partialIdx - 1], perMatchExp, '额度正好整除时最后一局仍为全额');
+  } else {
+    assert.equal(awards[partialIdx], dailyCap - partialIdx * perMatchExp, '触顶那一局只发剩余额度');
+  }
+  assert.equal(awards[partialIdx + 1], 0, '额度用尽后不再产出');
+  assert.equal(last.data.progress.exp, dailyCap);
 });
 
 test('recordResult：非法上报被拒（篡改位移）', async () => {
@@ -349,6 +363,8 @@ test('dailyTasks 云函数：进度不足 → 达成可领 → 重复领取幂�
   const store = createMemoryStore();
   resetStore(store);
   const now = Date.now();
+  // 单局奖励（与服务端同口径）：结果基础 + 完美段数折算，避免硬编码随重标定漂移
+  const perWin = PROGRESSION.reward.coinsByResult.win + PROGRESSION.reward.coinsPerPerfect * matchSummary({}).perfectHits;
 
   // 初始：全不可领
   let res = await dailyTasksFn({ action: 'state' }, CTX);
@@ -364,18 +380,18 @@ test('dailyTasks 云函数：进度不足 → 达成可领 → 重复领取幂�
   const win2 = res.data.tasks.tasks.find((t) => t.id === 'win2');
   assert.equal(win2.claimable, true, '胜 2 局后可领');
   assert.equal(res.data.tasks.tasks.find((t) => t.id === 'play3').claimable, false, '还差 1 局');
-  assert.equal(res.data.progress.coins, 92, '两局胜利产出 46×2');
+  assert.equal(res.data.progress.coins, perWin * 2, '两局胜利产出的金币');
 
   // 领取
   res = await dailyTasksFn({ action: 'claim', taskId: 'win2' }, CTX);
   assert.equal(res.data.granted, 60);
-  assert.equal(res.data.progress.coins, 92 + 60);
+  assert.equal(res.data.progress.coins, perWin * 2 + 60);
 
   // 重复领取：幂等，不发奖
   res = await dailyTasksFn({ action: 'claim', taskId: 'win2' }, CTX);
   assert.equal(res.data.granted, 0);
   assert.equal(res.data.reason, 'already-claimed');
-  assert.equal(res.data.progress.coins, 92 + 60);
+  assert.equal(res.data.progress.coins, perWin * 2 + 60);
 
   // 未达成时领取 → not-done（此时 play3 只到 2/3）
   res = await dailyTasksFn({ action: 'claim', taskId: 'play3' }, CTX);

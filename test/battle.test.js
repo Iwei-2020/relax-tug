@@ -30,12 +30,20 @@ function curTarget(m) {
   return m.round ? m.round.targetIds[m.round.seqIndex] : null;
 }
 
+/**
+ * 单段耗时（模拟「熟练玩家快速连点」）：以固定小 dt 驱动 playOut，
+ * 使「全命中 / 全失误」这类确定性用例在远低于 §6.3 硬上限（45s）的步数内收官。
+ * 越线阈值重标定后单局命中段数由 ≈18 涨到 ≈36，若沿用整段 windowMs（1400ms）作为 dt，
+ * 累计耗时（≈40s+）会贴近甚至越过硬上限，用例会退化为「超时收官」而非「越线收官」。
+ */
+const FAST_SEG_MS = 100;
+
 /** 把一局跑到结束（guard 防死循环）。 */
 function playOut(match, rand, decide) {
   let m = match;
   let guard = 0;
   while (!isOver(m) && guard < 500) {
-    m = submit(m, decide(m), m.round ? m.round.windowMs : 1400, rand);
+    m = submit(m, decide(m), FAST_SEG_MS, rand);
     // 序列未走完时 nextRound 是 no-op，下一轮迭代继续点同一轮的下一段
     if (!isOver(m)) m = nextRound(m, rand);
     guard += 1;

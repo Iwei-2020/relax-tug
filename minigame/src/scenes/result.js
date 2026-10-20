@@ -19,6 +19,7 @@
 const { HOME, MACARON } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { roundRect } = require('../components/shape.js');
+const { HIT_ENERGY, COMBO_BONUS_MAX } = require('../config/config.js');
 const { createRng } = require('../core/rng.js');
 const { findEvent } = require('../core/events.js');
 const { AD_UNITS, showRewardedVideo } = require('../platform/ad.js');
@@ -31,11 +32,12 @@ const SHAKE_MS = 260;
 /** 粒子渐隐时长（乘 BURST_MS 之后）。 */
 const BURST_FADE_MS = 420;
 
-/** "差一点"文案：按净能量差给不同措辞（§4.3）。 */
+/** "差一点"文案：按净能量差给不同措辞（§4.3）。阈值按能量尺度派生，避免阈值重标定后永远落到最后一档。 */
 function almostText(summary) {
   const gap = Math.abs(summary.netEnergy || 0);
-  if (gap <= 12) return '就差 1 次命中！';
-  if (gap <= 30) return '再快一点就翻盘了';
+  const unit = HIT_ENERGY + COMBO_BONUS_MAX; // 18 = 单段命中的最高能量（基础 + 满连击）
+  if (gap <= unit) return '就差 1 次命中！';
+  if (gap <= unit * 3) return '再快一点就翻盘了';
   return '差得不多，再来一局找回场子';
 }
 
