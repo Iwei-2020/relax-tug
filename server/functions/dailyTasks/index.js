@@ -11,8 +11,10 @@
  *   - `claim`：领取单条任务（需 `taskId`），幂等
  *   - `chest`：领取每日宝箱（全部任务达成时），幂等
  *
- * 刷新口径：与每日挑战、广告频次同一天 —— 复用 `lib/result.js` 的 `dayKey`（UTC+8 自然日），
+ * 刷新口径：与闯关挑战（原每日挑战）、广告频次同一天 —— 复用 `lib/result.js` 的 `dayKey`（UTC+8 自然日），
  * 计数器文档 `openid:day` 即「今天」的任务状态载体（§4.7「同一把尺子」）。
+ *
+ * `levels`：权威闯关进度（§4.8），随每次响应回执，供**换设备冷启动**时恢复关卡进度。
  */
 
 const { CODES, ok, fail, fromError } = require('../../lib/envelope.js');
@@ -22,6 +24,7 @@ const { emptyCounter } = require('../../lib/store.js');
 const { dayKey } = require('../../lib/result.js');
 const { stateFromCounter, counterFields, summaryOf, claim, claimChest } = require('../../lib/tasks.js');
 const { progressOf } = require('../../lib/progression.js');
+const levels = require('../../lib/levels.js');
 
 /** 档案兜底（首次交互的玩家尚无档案）。 */
 function emptyProfile(openid, nowMs) {
@@ -44,7 +47,14 @@ module.exports = async function dailyTasks(params, context) {
     const state = stateFromCounter(counter, day);
 
     if (action === 'state') {
-      return ok({ day, granted: 0, reason: 'state', tasks: summaryOf(state), progress: progressOf(profile) });
+      return ok({
+        day,
+        granted: 0,
+        reason: 'state',
+        tasks: summaryOf(state),
+        progress: progressOf(profile),
+        levels: levels.normalizeLevels(profile.levels),
+      });
     }
 
     let result;
@@ -54,7 +64,14 @@ module.exports = async function dailyTasks(params, context) {
 
     // 幂等语义：未达成 / 已领过都不算失败 —— 返回当前状态与原因，客户端据此刷新按钮（不重复发奖）
     if (!result.ok) {
-      return ok({ day, granted: 0, reason: result.reason, tasks: summaryOf(result.state), progress: progressOf(profile) });
+      return ok({
+        day,
+        granted: 0,
+        reason: result.reason,
+        tasks: summaryOf(result.state),
+        progress: progressOf(profile),
+        levels: levels.normalizeLevels(profile.levels),
+      });
     }
 
     // 发奖：金币只增不减（§4.6）；任务 / 宝箱金币为固定发放，不计入「对局产出」的每日封顶口径
@@ -73,6 +90,7 @@ module.exports = async function dailyTasks(params, context) {
       reason: 'ok',
       tasks: summaryOf(result.state),
       progress: progressOf(nextProfile),
+      levels: levels.normalizeLevels(nextProfile.levels),
     });
   } catch (err) {
     return fromError(err);
