@@ -94,6 +94,49 @@ const CONFIG = {
     skinUnlockPerDay: 2, // 皮肤解锁：每日 2 次
   },
 
+  /* ── §4.6 / §6.6 局外成长（等级 / 经验 / 金币 / 段位） ───────────── */
+  // 奖励一律**由对局摘要推导**（结果 + 命中段数 + 完美段数）：客户端与服务端各自用
+  // 这份参数重算（服务端另做单局 / 每日封顶，见 §6.6），**不接受**客户端自行上报奖励数字。
+  progression: {
+    maxLevel: 60,
+    levelBase: 100, // 升到第 2 级所需经验
+    levelStep: 100, // 每升一级所需经验的递增量（等差曲线）
+    reward: {
+      expByResult: { win: 20, draw: 12, lose: 8 }, // 结果基础经验
+      coinsByResult: { win: 30, draw: 15, lose: 10 }, // 结果基础金币
+      expPerHit: 1, // 每命中一段
+      expPerPerfect: 2, // 每完美判定一段
+      coinsPerPerfect: 2, // 每完美判定一段
+      matchExpCap: 90, // 单局经验封顶（防刷）
+      matchCoinCap: 120, // 单局金币封顶（防刷）
+      dailyExpCap: 800, // 每日经验封顶（防刷）
+      dailyCoinCap: 1000, // 每日金币封顶（防刷）
+    },
+    // 段位：由等级分段推导（取满足 minLevel ≤ level 的最后一段），只升不降
+    ranks: [
+      { id: 'bronze', name: '青铜', minLevel: 1 },
+      { id: 'silver', name: '白银', minLevel: 6 },
+      { id: 'gold', name: '黄金', minLevel: 12 },
+      { id: 'platinum', name: '铂金', minLevel: 20 },
+      { id: 'diamond', name: '钻石', minLevel: 30 },
+      { id: 'master', name: '王者', minLevel: 45 },
+    ],
+  },
+
+  /* ── §4.7 / §6.6 每日任务与宝箱（UTC+8 自然日刷新） ─────────────── */
+  // metric：取对局摘要中的哪个字段；mode：'count'（每局 +0/1）/ 'sum'（累加）/ 'max'（取最大）。
+  // 刷新口径与每日挑战（core/rng.dailyChallengeSeed）共用同一 UTC+8 dayKey —— 保证「今天」是同一个今天。
+  dailyTasks: {
+    enabled: true,
+    pool: [
+      { id: 'play3', name: '完成 3 局对战', metric: 'matches', mode: 'count', goal: 3, coins: 40 },
+      { id: 'win2', name: '赢得 2 局', metric: 'wins', mode: 'count', goal: 2, coins: 60 },
+      { id: 'perfect10', name: '累计 10 次完美判定', metric: 'perfectHits', mode: 'sum', goal: 10, coins: 50 },
+      { id: 'combo8', name: '单局达成 8 连击', metric: 'bestCombo', mode: 'max', goal: 8, coins: 40 },
+    ],
+    chestCoins: 100, // 全部任务达成后可领的每日宝箱
+  },
+
   /* ── §3.2 / §3.3 调色板（9 色；颜色即唯一标识，禁止纯文字标色名） ── */
   palette: [
     { id: 'red', name: '红', hex: '#F44336' },
@@ -156,5 +199,7 @@ module.exports = {
   EVENT_MAX_ENERGY_SCALE,
   EVENT_MAX_PER_MATCH,
   MONETIZATION: CONFIG.monetization,
+  PROGRESSION: CONFIG.progression,
+  DAILY_TASKS: CONFIG.dailyTasks,
   PALETTE: CONFIG.palette,
 };

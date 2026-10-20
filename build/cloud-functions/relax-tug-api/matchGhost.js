@@ -1,7 +1,7 @@
 /**
  * 抖音云函数服务产物：matchGhost.js
  *
- * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/functions/matchGhost/index.js
+ * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/progression.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/lib/tasks.js / server/functions/matchGhost/index.js
  * 改完源后重跑 `node tools/gen-cloud-functions.js`（生成脚本：tools/gen-cloud-functions.js）。
  *
  * 平台契约：入口 `module.exports = async function (params, context)`，`params` 即 HTTP 请求体本身，
@@ -36,8 +36,8 @@
  * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）
  *
  * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。
- * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）与 §5.1（广告频次上限）。
- * PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。
+ * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）
+ * 与 §5.1（广告频次上限）。PALETTE（配色）与事件池明细属客户端专用，不进本镜像（只镜像 §6.5 的派生标量）。
  */
 module.exports = {
   "WIN_NET_ENERGY": 80,
@@ -101,6 +101,100 @@ module.exports = {
     "rewardDoublePerDay": 3,
     "firstWinTriplePerDay": 1,
     "skinUnlockPerDay": 2
+  },
+  "PROGRESSION": {
+    "maxLevel": 60,
+    "levelBase": 100,
+    "levelStep": 100,
+    "reward": {
+      "expByResult": {
+        "win": 20,
+        "draw": 12,
+        "lose": 8
+      },
+      "coinsByResult": {
+        "win": 30,
+        "draw": 15,
+        "lose": 10
+      },
+      "expPerHit": 1,
+      "expPerPerfect": 2,
+      "coinsPerPerfect": 2,
+      "matchExpCap": 90,
+      "matchCoinCap": 120,
+      "dailyExpCap": 800,
+      "dailyCoinCap": 1000
+    },
+    "ranks": [
+      {
+        "id": "bronze",
+        "name": "青铜",
+        "minLevel": 1
+      },
+      {
+        "id": "silver",
+        "name": "白银",
+        "minLevel": 6
+      },
+      {
+        "id": "gold",
+        "name": "黄金",
+        "minLevel": 12
+      },
+      {
+        "id": "platinum",
+        "name": "铂金",
+        "minLevel": 20
+      },
+      {
+        "id": "diamond",
+        "name": "钻石",
+        "minLevel": 30
+      },
+      {
+        "id": "master",
+        "name": "王者",
+        "minLevel": 45
+      }
+    ]
+  },
+  "DAILY_TASKS": {
+    "enabled": true,
+    "pool": [
+      {
+        "id": "play3",
+        "name": "完成 3 局对战",
+        "metric": "matches",
+        "mode": "count",
+        "goal": 3,
+        "coins": 40
+      },
+      {
+        "id": "win2",
+        "name": "赢得 2 局",
+        "metric": "wins",
+        "mode": "count",
+        "goal": 2,
+        "coins": 60
+      },
+      {
+        "id": "perfect10",
+        "name": "累计 10 次完美判定",
+        "metric": "perfectHits",
+        "mode": "sum",
+        "goal": 10,
+        "coins": 50
+      },
+      {
+        "id": "combo8",
+        "name": "单局达成 8 连击",
+        "metric": "bestCombo",
+        "mode": "max",
+        "goal": 8,
+        "coins": 40
+      }
+    ],
+    "chestCoins": 100
   }
 };
   };
@@ -252,6 +346,139 @@ function openidFromContext(context) {
 module.exports = { OPENID_HEADERS, headerOf, openidFromContext };
   };
 
+  // ── server/lib/progression.js
+  __registry["server/lib/progression.js"] = function (module, exports, require) {
+'use strict';
+
+/**
+ * 服务端局外成长（《项目说明书》§4.6 局外成长 + §6.6 数值）
+ *
+ * 与客户端 `minigame/src/core/progression.js` **同一套公式、同一份参数**
+ * （参数来自 constants.PROGRESSION 镜像），由 `test/progression.test.js` 交叉校验两端等价。
+ * 服务端相对客户端的唯一增量：**每日封顶**（§6.6 防刷）——按当日已产出量削减本局奖励。
+ */
+
+const { PROGRESSION } = __req('server/lib/constants.js');
+
+/** 升到第 level 级所需经验（§6.6：`levelBase + levelStep × (level − 1)`）。 */
+function expToNext(level, cfg) {
+  const c = cfg || PROGRESSION;
+  return c.levelBase + c.levelStep * (Math.max(1, Math.floor(level || 1)) - 1);
+}
+
+/** 由等级推导段位（取满足 `minLevel ≤ level` 的最后一段）。 */
+function rankFor(level, cfg) {
+  const c = cfg || PROGRESSION;
+  const lv = Math.max(1, Math.floor(level || 1));
+  const ranks = c.ranks;
+  let picked = ranks[0];
+  for (let i = 0; i < ranks.length; i += 1) {
+    if (lv >= ranks[i].minLevel) picked = ranks[i];
+  }
+  return picked;
+}
+
+/** 由累计经验推导等级。 */
+function levelFromExp(exp, cfg) {
+  const c = cfg || PROGRESSION;
+  let level = 1;
+  let left = Math.max(0, Math.floor(exp || 0));
+  while (level < c.maxLevel) {
+    const need = expToNext(level, c);
+    if (left < need) break;
+    left -= need;
+    level += 1;
+  }
+  const isMax = level >= c.maxLevel;
+  return { level, expInLevel: left, expToNext: isMax ? 0 : expToNext(level, c), isMax };
+}
+
+/** 单局奖励（§6.6）：只由对局摘要推导 + 单局封顶。 */
+function awardFor(summary, cfg) {
+  const c = cfg || PROGRESSION;
+  const r = c.reward;
+  const s = summary || {};
+  const result = s.result === 'win' ? 'win' : s.result === 'draw' ? 'draw' : 'lose';
+  const hits = Math.max(0, Math.floor(s.hits || 0));
+  const perfects = Math.max(0, Math.floor(s.perfectHits || 0));
+
+  const exp = Math.min(r.matchExpCap, (r.expByResult[result] || 0) + hits * r.expPerHit + perfects * r.expPerPerfect);
+  const coins = Math.min(r.matchCoinCap, (r.coinsByResult[result] || 0) + perfects * r.coinsPerPerfect);
+  return { exp, coins };
+}
+
+/**
+ * 单局奖励 + **每日封顶**（服务端权威，§6.6 防刷）。
+ * @param {object} summary 对局摘要
+ * @param {object} counter 当日计数器（含 `expEarned` / `coinsEarned` 已产出量）
+ * @returns {{exp:number, coins:number}} 实际发放量（可能因当日额度耗尽而为 0）
+ */
+function awardWithDailyCaps(summary, counter, cfg) {
+  const c = cfg || PROGRESSION;
+  const r = c.reward;
+  const base = awardFor(summary, c);
+  const usedExp = Math.max(0, Math.floor((counter && counter.expEarned) || 0));
+  const usedCoins = Math.max(0, Math.floor((counter && counter.coinsEarned) || 0));
+  const exp = Math.max(0, Math.min(base.exp, r.dailyExpCap - usedExp));
+  const coins = Math.max(0, Math.min(base.coins, r.dailyCoinCap - usedCoins));
+  return { exp, coins };
+}
+
+/**
+ * 把奖励并入档案（返回新档案）：累计经验 / 金币，重算等级与段位，累计场次与胜场。
+ * @param {object} profile 原档案（可为 null）
+ * @param {{exp:number, coins:number}} award
+ * @param {'win'|'lose'|'draw'} result
+ * @param {number} nowMs
+ */
+function applyAward(profile, award, result, nowMs, cfg) {
+  const c = cfg || PROGRESSION;
+  const p = profile || {};
+  const exp = Math.max(0, Math.floor(p.exp || 0) + Math.floor((award && award.exp) || 0));
+  const coins = Math.max(0, Math.floor(p.coins || 0) + Math.floor((award && award.coins) || 0));
+  const lv = levelFromExp(exp, c);
+  return {
+    ...p,
+    exp,
+    coins,
+    level: lv.level,
+    rankId: rankFor(lv.level, c).id,
+    matches: Math.max(0, Math.floor(p.matches || 0)) + 1,
+    wins: Math.max(0, Math.floor(p.wins || 0)) + (result === 'win' ? 1 : 0),
+    updatedAt: nowMs,
+  };
+}
+
+/** 对外回执用的进度摘要。 */
+function progressOf(profile, cfg) {
+  const c = cfg || PROGRESSION;
+  const exp = Math.max(0, Math.floor((profile && profile.exp) || 0));
+  const lv = levelFromExp(exp, c);
+  const rank = rankFor(lv.level, c);
+  return {
+    exp,
+    coins: Math.max(0, Math.floor((profile && profile.coins) || 0)),
+    level: lv.level,
+    expInLevel: lv.expInLevel,
+    expToNext: lv.expToNext,
+    rankId: rank.id,
+    rankName: rank.name,
+    matches: Math.max(0, Math.floor((profile && profile.matches) || 0)),
+    wins: Math.max(0, Math.floor((profile && profile.wins) || 0)),
+  };
+}
+
+module.exports = {
+  expToNext,
+  rankFor,
+  levelFromExp,
+  awardFor,
+  awardWithDailyCaps,
+  applyAward,
+  progressOf,
+};
+  };
+
   // ── server/lib/result.js
   __registry["server/lib/result.js"] = function (module, exports, require) {
 'use strict';
@@ -283,6 +510,8 @@ const {
 } = __req('server/lib/constants.js');
 const { CODES, ok, fail } = __req('server/lib/envelope.js');
 const { emptyCounter } = __req('server/lib/store.js');
+const { awardWithDailyCaps, applyAward, progressOf } = __req('server/lib/progression.js');
+const { stateFromCounter, counterFields, applyMatch, summaryOf } = __req('server/lib/tasks.js');
 
 /** 判定结果集合。 */
 const RESULTS = ['win', 'lose', 'draw'];
@@ -383,23 +612,25 @@ async function recordResult(store, openid, payload, nowMs) {
   const day = dayKey(nowMs);
   const isWin = payload.result === 'win';
 
-  // 档案：累计对局与胜场
+  // 档案与当日计数器：先读旧值（计数器读不到时补空默认值）
   const prevProfile = (await store.getProfile(openid)) || {
     openid,
     nickname: '',
     wins: 0,
     matches: 0,
+    exp: 0,
+    coins: 0,
     createdAt: nowMs,
   };
-  const profile = {
-    ...prevProfile,
-    matches: (prevProfile.matches || 0) + 1,
-    wins: (prevProfile.wins || 0) + (isWin ? 1 : 0),
-    updatedAt: nowMs,
-  };
-
-  // 计数：每日首胜三倍（§5.1）
   const prevCounter = (await store.countersOf(openid, day)) || emptyCounter();
+
+  // §4.6 局外成长：奖励由对局摘要推导（客户端不可上报奖励数字），服务端另做单局 + 每日封顶（§6.6）
+  const award = awardWithDailyCaps(payload, prevCounter);
+  const profile = applyAward(prevProfile, award, payload.result, nowMs);
+
+  // §4.7 每日任务：进度累计进当日计数器（与广告频次共享同一 openid:day 文档）
+  const taskState = applyMatch(stateFromCounter(prevCounter, day), payload);
+
   const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
@@ -407,6 +638,9 @@ async function recordResult(store, openid, payload, nowMs) {
     win: prevCounter.win + (isWin ? 1 : 0),
     firstWinUsed: prevCounter.firstWinUsed || isWin,
     lastMatchAt: nowMs,
+    expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
+    coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
+    ...counterFields(taskState),
   };
 
   await store.saveProfile(profile);
@@ -430,6 +664,8 @@ async function recordResult(store, openid, payload, nowMs) {
     oppEnergy: payload.oppEnergy,
     netEnergy: payload.netEnergy,
     displacementPx: payload.displacementPx,
+    awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
+    awardCoins: award.coins,
     createdAt: nowMs,
   });
 
@@ -438,6 +674,9 @@ async function recordResult(store, openid, payload, nowMs) {
     matches: profile.matches,
     firstWinToday,
     rewardMultiplier: firstWinToday ? 3 : 1, // 每日首胜三倍（§5.1）
+    award, // 本局实发奖励（§4.6）
+    progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
+    tasks: summaryOf(taskState), // 每日任务进度（§4.7）
     daily: {
       match: counter.match,
       win: counter.win,
@@ -624,6 +863,13 @@ function emptyCounter() {
     rewardDouble: 0, // 当日结算翻倍已用次数
     skinUnlock: 0, // 当日皮肤解锁已用次数
     lastMatchAt: 0,
+    // ── §4.6 / §6.6 局外成长：当日「对局产出」累计量，用于每日封顶（防刷） ──
+    expEarned: 0,
+    coinsEarned: 0,
+    // ── §4.7 每日任务：进度 / 已领任务 / 宝箱（与上面共享同一「今天」，跨日整份重建） ──
+    taskProgress: {},
+    taskClaimed: {},
+    chestClaimed: false,
   };
 }
 
@@ -673,6 +919,148 @@ function createMemoryStore(seed) {
 }
 
 module.exports = { createMemoryStore, emptyCounter, C_PROFILES, C_RESULTS, C_COUNTERS };
+  };
+
+  // ── server/lib/tasks.js
+  __registry["server/lib/tasks.js"] = function (module, exports, require) {
+'use strict';
+
+/**
+ * 服务端每日任务（《项目说明书》§4.7 每日任务与宝箱 + §6.6 数值）
+ *
+ * 与客户端 `minigame/src/core/tasks.js` **同一套公式、同一份参数**（constants.DAILY_TASKS 镜像），
+ * 由 `test/progression.test.js` 交叉校验两端等价。
+ *
+ * 存储形态：进度与领奖状态**扁平地挂在当日计数器**（`rt_counters` 的 `openid:day` 文档）上，
+ * 与广告频次共享同一份「今天」，因此天然满足 §4.7「与每日挑战同一把尺子」的刷新口径。
+ * 纯函数一律返回新对象（`store` 读出的对象只是浅拷贝，原地改不会落库）。
+ */
+
+const { DAILY_TASKS } = __req('server/lib/constants.js');
+
+/** 本局对某指标的增量（§6.6 metric 定义）。 */
+function metricValue(summary, metric) {
+  const s = summary || {};
+  switch (metric) {
+    case 'matches':
+      return 1;
+    case 'wins':
+      return s.result === 'win' ? 1 : 0;
+    case 'perfectHits':
+      return Math.max(0, Math.floor(s.perfectHits || 0));
+    case 'bestCombo':
+      return Math.max(0, Math.floor(s.bestCombo || 0));
+    default:
+      return 0;
+  }
+}
+
+/** 计数器 → 纯状态（供下列纯函数使用）。 */
+function stateFromCounter(counter, day) {
+  const c = counter || {};
+  return {
+    day: day || '',
+    progress: c.taskProgress && typeof c.taskProgress === 'object' ? { ...c.taskProgress } : {},
+    claimed: c.taskClaimed && typeof c.taskClaimed === 'object' ? { ...c.taskClaimed } : {},
+    chestClaimed: c.chestClaimed === true,
+  };
+}
+
+/** 纯状态 → 计数器字段（写回时合并进 counter）。 */
+function counterFields(state) {
+  return {
+    taskProgress: { ...state.progress },
+    taskClaimed: { ...state.claimed },
+    chestClaimed: state.chestClaimed === true,
+  };
+}
+
+/** 一局结算后累计进度（返回新状态）。 */
+function applyMatch(state, summary, cfg) {
+  const c = cfg || DAILY_TASKS;
+  const st = state || stateFromCounter(null, '');
+  const progress = { ...st.progress };
+  for (let i = 0; i < c.pool.length; i += 1) {
+    const task = c.pool[i];
+    const inc = metricValue(summary, task.metric);
+    const prev = progress[task.id] || 0;
+    progress[task.id] = task.mode === 'max' ? Math.max(prev, inc) : prev + inc;
+  }
+  return { ...st, progress };
+}
+
+/** 任务状态列表（供回执与领奖校验）。 */
+function taskStates(state, cfg) {
+  const c = cfg || DAILY_TASKS;
+  const st = state || stateFromCounter(null, '');
+  return c.pool.map((task) => {
+    const raw = st.progress[task.id] || 0;
+    const claimed = st.claimed[task.id] === true;
+    const done = raw >= task.goal;
+    return {
+      id: task.id,
+      name: task.name,
+      goal: task.goal,
+      progress: Math.min(raw, task.goal),
+      done,
+      claimed,
+      claimable: done && !claimed,
+      coins: task.coins,
+    };
+  });
+}
+
+/** 全部任务是否达成。 */
+function allDone(state, cfg) {
+  return taskStates(state, cfg).every((t) => t.done);
+}
+
+/** 宝箱状态（含是否可领）。 */
+function chestState(state, cfg) {
+  const c = cfg || DAILY_TASKS;
+  const st = state || stateFromCounter(null, '');
+  const ready = allDone(st, c);
+  const claimed = st.chestClaimed === true;
+  return { coins: c.chestCoins, ready, claimed, claimable: ready && !claimed };
+}
+
+/** 领取单个任务（幂等）。 */
+function claim(state, taskId, cfg) {
+  const c = cfg || DAILY_TASKS;
+  const st = state || stateFromCounter(null, '');
+  const task = c.pool.find((t) => t.id === taskId);
+  if (!task) return { state: st, coins: 0, ok: false, reason: 'unknown-task' };
+  if ((st.progress[taskId] || 0) < task.goal) return { state: st, coins: 0, ok: false, reason: 'not-done' };
+  if (st.claimed[taskId] === true) return { state: st, coins: 0, ok: false, reason: 'already-claimed' };
+  return { state: { ...st, claimed: { ...st.claimed, [taskId]: true } }, coins: task.coins, ok: true, reason: 'ok' };
+}
+
+/** 领取宝箱（幂等）。 */
+function claimChest(state, cfg) {
+  const c = cfg || DAILY_TASKS;
+  const st = state || stateFromCounter(null, '');
+  if (!allDone(st, c)) return { state: st, coins: 0, ok: false, reason: 'not-all-done' };
+  if (st.chestClaimed === true) return { state: st, coins: 0, ok: false, reason: 'already-claimed' };
+  return { state: { ...st, chestClaimed: true }, coins: c.chestCoins, ok: true, reason: 'ok' };
+}
+
+/** 回执用的任务汇总：`{ tasks, chest }`。 */
+function summaryOf(state, cfg) {
+  return { tasks: taskStates(state, cfg), chest: chestState(state, cfg) };
+}
+
+module.exports = {
+  metricValue,
+  stateFromCounter,
+  counterFields,
+  applyMatch,
+  taskStates,
+  allDone,
+  chestState,
+  claim,
+  claimChest,
+  summaryOf,
+};
   };
 
   // ── server/functions/matchGhost/index.js

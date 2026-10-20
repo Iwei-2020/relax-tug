@@ -27,6 +27,8 @@ const {
 } = require('./constants.js');
 const { CODES, ok, fail } = require('./envelope.js');
 const { emptyCounter } = require('./store.js');
+const { awardWithDailyCaps, applyAward, progressOf } = require('./progression.js');
+const { stateFromCounter, counterFields, applyMatch, summaryOf } = require('./tasks.js');
 
 /** 判定结果集合。 */
 const RESULTS = ['win', 'lose', 'draw'];
@@ -127,23 +129,25 @@ async function recordResult(store, openid, payload, nowMs) {
   const day = dayKey(nowMs);
   const isWin = payload.result === 'win';
 
-  // 档案：累计对局与胜场
+  // 档案与当日计数器：先读旧值（计数器读不到时补空默认值）
   const prevProfile = (await store.getProfile(openid)) || {
     openid,
     nickname: '',
     wins: 0,
     matches: 0,
+    exp: 0,
+    coins: 0,
     createdAt: nowMs,
   };
-  const profile = {
-    ...prevProfile,
-    matches: (prevProfile.matches || 0) + 1,
-    wins: (prevProfile.wins || 0) + (isWin ? 1 : 0),
-    updatedAt: nowMs,
-  };
-
-  // 计数：每日首胜三倍（§5.1）
   const prevCounter = (await store.countersOf(openid, day)) || emptyCounter();
+
+  // §4.6 局外成长：奖励由对局摘要推导（客户端不可上报奖励数字），服务端另做单局 + 每日封顶（§6.6）
+  const award = awardWithDailyCaps(payload, prevCounter);
+  const profile = applyAward(prevProfile, award, payload.result, nowMs);
+
+  // §4.7 每日任务：进度累计进当日计数器（与广告频次共享同一 openid:day 文档）
+  const taskState = applyMatch(stateFromCounter(prevCounter, day), payload);
+
   const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
@@ -151,6 +155,9 @@ async function recordResult(store, openid, payload, nowMs) {
     win: prevCounter.win + (isWin ? 1 : 0),
     firstWinUsed: prevCounter.firstWinUsed || isWin,
     lastMatchAt: nowMs,
+    expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
+    coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
+    ...counterFields(taskState),
   };
 
   await store.saveProfile(profile);
@@ -174,6 +181,8 @@ async function recordResult(store, openid, payload, nowMs) {
     oppEnergy: payload.oppEnergy,
     netEnergy: payload.netEnergy,
     displacementPx: payload.displacementPx,
+    awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
+    awardCoins: award.coins,
     createdAt: nowMs,
   });
 
@@ -182,6 +191,9 @@ async function recordResult(store, openid, payload, nowMs) {
     matches: profile.matches,
     firstWinToday,
     rewardMultiplier: firstWinToday ? 3 : 1, // 每日首胜三倍（§5.1）
+    award, // 本局实发奖励（§4.6）
+    progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
+    tasks: summaryOf(taskState), // 每日任务进度（§4.7）
     daily: {
       match: counter.match,
       win: counter.win,
