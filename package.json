@@ -15,6 +15,6 @@
     "sim:check": "node tools/sim-balance.js --check",
     "sim:levels": "node tools/sim-levels.js --baseline",
     "sim:levels:check": "node tools/sim-levels.js --check",
-    "verify": "npm test && npm run gen:check && npm run sim:check"
+    "verify": "npm test && npm run gen:check && npm run sim:check && npm run sim:levels:check"
   }
 }
