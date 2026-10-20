@@ -57,6 +57,18 @@ function hashSeed(key) {
 }
 
 /**
+ * UTC+8 自然日的日期键（`yyyy-mm-dd`）。
+ *
+ * 唯一口径来源：每日挑战种子（§4.4）与每日任务刷新（§4.7）都必须按**同一个「今天」**切分，
+ * 因此两者共用本函数；服务端 `server/lib/result.js` 的 `dayKey` 与之同口径（有单测交叉校验）。
+ * @param {number} nowMs 当前时间戳（毫秒）
+ * @returns {string} UTC+8 自然日
+ */
+function utc8DayKey(nowMs) {
+  return new Date(nowMs + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
  * 每日挑战种子（《项目说明书》§4.4）：按「自然日（UTC+8）+ 难度档」派生。
  * 同一自然日 + 同一难度 → 同一局（同序列、同 AI 行为），不同设备结果一致；
  * 种子完全由客户端推导，**无需服务端下发**。
@@ -65,8 +77,7 @@ function hashSeed(key) {
  * @returns {number} 32 位整数种子
  */
 function dailyChallengeSeed(nowMs, difficultyKey) {
-  const dayKey = new Date(nowMs + 8 * 3600 * 1000).toISOString().slice(0, 10); // UTC+8 自然日
-  return hashSeed(`${dayKey}|${difficultyKey}`);
+  return hashSeed(`${utc8DayKey(nowMs)}|${difficultyKey}`);
 }
 
-module.exports = { createRng, pick, chance, randInt, hashSeed, dailyChallengeSeed };
+module.exports = { createRng, pick, chance, randInt, hashSeed, utc8DayKey, dailyChallengeSeed };

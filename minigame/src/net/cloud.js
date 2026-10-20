@@ -127,6 +127,21 @@ function reportEvents(batch) {
   return callFunction('reportEvents', { events: batch });
 }
 
+/** 每日任务状态（§4.7）：服务端权威进度 + 任务列表 + 宝箱状态。 */
+function fetchDailyTasks() {
+  return callFunction('dailyTasks', { action: 'state' });
+}
+
+/** 领取单条每日任务（§4.7）：服务端校验进度与幂等，回执携带最新 tasks / progress。 */
+function claimDailyTask(taskId) {
+  return callFunction('dailyTasks', { action: 'claim', taskId: taskId });
+}
+
+/** 领取每日宝箱（§4.7）：需当日全部任务达成，幂等。 */
+function claimChest() {
+  return callFunction('dailyTasks', { action: 'chest' });
+}
+
 module.exports = {
   CLOUD,
   normalize,
@@ -135,4 +150,7 @@ module.exports = {
   fetchGhostParams,
   reportResult,
   reportEvents,
+  fetchDailyTasks,
+  claimDailyTask,
+  claimChest,
 };

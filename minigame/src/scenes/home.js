@@ -18,7 +18,7 @@
  * 仅扩大可点范围，不改变视觉尺寸。
  */
 
-const { HOME, MIN_TOUCH } = require('../components/theme.js');
+const { HOME, MACARON, MIN_TOUCH } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 
@@ -50,11 +50,11 @@ function computeHomeLayout(layout) {
   const share = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(subCy - subH / 2), w: subW, h: subH };
   const challenge = { x: Math.round(cx + subGap / 2), y: Math.round(subCy - subH / 2), w: subW, h: subH };
 
-  // 每日挑战（§4.4）：居中于两个胶囊之下；矮屏时下移到「与胶囊触摸区刚好不重叠」的位置
-  const dailyH = Math.round(H * 0.074);
-  const dailyW = Math.round(W * 0.58);
-  const dailyCy = Math.max(Math.round(H * 0.802), subCy + MIN_TOUCH);
-  const daily = { x: Math.round(cx - dailyW / 2), y: Math.round(dailyCy - dailyH / 2), w: dailyW, h: dailyH };
+  // 第三行（§4.4 每日挑战 + §4.7 每日任务）：沿用次级胶囊的双列几何，置于两个胶囊之下；
+  // 矮屏时下移到「与上方胶囊触摸区刚好不重叠」的位置
+  const row2Cy = Math.max(Math.round(H * 0.802), subCy + MIN_TOUCH);
+  const daily = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
+  const tasks = { x: Math.round(cx + subGap / 2), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
 
   return {
     W,
@@ -74,6 +74,7 @@ function computeHomeLayout(layout) {
     share,
     challenge,
     daily,
+    tasks,
   };
 }
 
@@ -106,7 +107,9 @@ function titleGradient(ctx, L, cache) {
  * @param {() => void} [options.onShare] 点击「分享战绩」
  * @param {() => void} [options.onChallenge] 点击「挑战好友」
  * @param {() => void} [options.onDaily] 点击「每日挑战」（§4.4）
- * @param {{nickname?:string, wins?:number}} [options.profile] 我方资料（接入服务端后填充）
+ * @param {() => void} [options.onTasks] 点击「每日任务」（§4.7）
+ * @param {{nickname?:string, wins?:number, level?:number, rankName?:string, coins?:number,
+ *          tasksClaimable?:number}} [options.profile] 我方资料（本地存档 + 服务端对账后填充）
  */
 function createHomeScene(options) {
   const opts = options || {};
@@ -118,15 +121,17 @@ function createHomeScene(options) {
   const hitShare = touchRect(L.share);
   const hitChallenge = touchRect(L.challenge);
   const hitDaily = touchRect(L.daily);
+  const hitTasks = touchRect(L.tasks);
   let pressed = null;
   let tMs = 0;
 
-  /** 命中目标（胶囊优先于每日挑战：矮屏两者触摸区相邻，交给上方胶囊，避免误触）。 */
+  /** 命中目标（胶囊优先于下一行：矮屏两者触摸区相邻，交给上方胶囊，避免误触）。 */
   function targetAt(x, y) {
     if (hit(hitMain, x, y)) return 'main';
     if (hit(hitShare, x, y)) return 'share';
     if (hit(hitChallenge, x, y)) return 'challenge';
     if (hit(hitDaily, x, y)) return 'daily';
+    if (hit(hitTasks, x, y)) return 'tasks';
     return null;
   }
 
@@ -176,9 +181,14 @@ function createHomeScene(options) {
       ctx.fillStyle = '#FFFFFF';
       ctx.font = `bold ${L.nameFont}px sans-serif`;
       ctx.fillText(profile.nickname || '我', pCx, card.y + card.h * 0.16);
+      // §4.6 局外成长：段位 · 等级 · 胜场 · 金币
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.font = `${L.winsFont}px sans-serif`;
-      ctx.fillText(`胜场 ${profile.wins || 0}`, pCx, card.y + card.h * 0.34);
+      ctx.fillText(
+        `${profile.rankName || '青铜'} Lv.${profile.level || 1} · 胜场 ${profile.wins || 0} · 金币 ${profile.coins || 0}`,
+        pCx,
+        card.y + card.h * 0.34
+      );
       ctx.restore();
 
       // 主 CTA（带轻微呼吸浮动）与次级入口
@@ -213,6 +223,23 @@ function createHomeScene(options) {
         fill: HOME.goldFill,
         pressed: pressed === 'daily',
       });
+      decor.drawPillButton(ctx, L.tasks, {
+        label: '每日任务',
+        font: `bold ${L.dailyFont}px sans-serif`,
+        border: MACARON.our,
+        glow: 'rgba(255,123,169,0.55)',
+        fill: HOME.mintFill,
+        pressed: pressed === 'tasks',
+      });
+      // 可领红点（§4.7：有未领奖励时提示）
+      if ((profile.tasksClaimable || 0) > 0) {
+        ctx.save();
+        ctx.fillStyle = '#FF5A7A';
+        ctx.beginPath();
+        ctx.arc(L.tasks.x + L.tasks.w - 12, L.tasks.y + 12, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     },
 
     onTouchStart(x, y) {
@@ -231,6 +258,8 @@ function createHomeScene(options) {
         if (typeof opts.onChallenge === 'function') opts.onChallenge();
       } else if (target === 'daily') {
         if (typeof opts.onDaily === 'function') opts.onDaily();
+      } else if (target === 'tasks') {
+        if (typeof opts.onTasks === 'function') opts.onTasks();
       }
     },
   };
