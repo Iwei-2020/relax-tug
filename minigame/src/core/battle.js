@@ -16,22 +16,36 @@ const {
   DEFAULT_DIFFICULTY,
   DIFFICULTY,
   MATCH_TIMEOUT_MS,
+  LEVEL_LIVES,
 } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout, displacement, finalResult } = require('./energy.js');
 const { createRound, currentTargetId, judgeGrade } = require('./matcher.js');
 const { createGhost, stepGhost } = require('./ghost.js');
 const { createEventState, activeEvent, tick: tickEvent, maybeTrigger } = require('./events.js');
+const { clampLevel, levelConfig } = require('./levels.js');
 
 /**
  * 创建一局（未开始，处于倒计时阶段）。
- * @param {{difficulty?:string, matchTimeoutMs?:number, challenge?:boolean}} [options]
+ *
+ * 两种模式（§4.8）：
+ *   · `classic`（默认）：普通对战，越线阈值恒 160、无生命值 —— 行为与本波改造前逐位一致；
+ *   · `level`：闯关模式，按 `level` 派生段数 / 候选 / 窗口 / 对手强度 / 越线阈值，
+ *     并带 3 条生命（点错 / 超时各扣 1，耗尽即闯关失败）。
+ * @param {{difficulty?:string, matchTimeoutMs?:number, challenge?:boolean, mode?:'classic'|'level', level?:number}} [options]
  */
 function createMatch(options) {
   const opts = options || {};
-  const difficulty = DIFFICULTY[opts.difficulty] ? opts.difficulty : DEFAULT_DIFFICULTY;
+  const mode = opts.mode === 'level' ? 'level' : 'classic';
+  const level = mode === 'level' ? clampLevel(opts.level) : null;
+  // 闯关模式：本关第 1 轮的参数（后续轮次在 nextRound 里按 roundIndex 重算）
+  const entryCfg = mode === 'level' ? levelConfig(level, 0) : null;
+  const difficulty =
+    mode === 'level' ? entryCfg.tier : DIFFICULTY[opts.difficulty] ? opts.difficulty : DEFAULT_DIFFICULTY;
   return {
+    mode, // 'classic' 普通对战 | 'level' 闯关模式（§4.8）
+    level, // 闯关关卡号（classic 为 null）
     difficulty,
-    challenge: opts.challenge === true, // 每日挑战局标记（§4.4：固定种子同题局，单独记账）
+    challenge: mode === 'classic' && opts.challenge === true, // 每日挑战局标记（§4.4 已下线，仅历史兼容）
     matchTimeoutMs: opts.matchTimeoutMs === undefined ? MATCH_TIMEOUT_MS : opts.matchTimeoutMs,
     phase: 'countdown',
     countdownLeftMs: COUNTDOWN_MS,
@@ -40,7 +54,14 @@ function createMatch(options) {
     roundElapsedMs: 0,
     round: null,
     player: createEnergyState(),
-    ghost: createGhost(difficulty),
+    ghost: createGhost(
+      difficulty,
+      mode === 'level'
+        ? { oppHit: entryCfg.oppHit, oppMiss: entryCfg.oppMiss, winNetEnergy: entryCfg.winNetEnergy }
+        : undefined
+    ),
+    livesLeft: mode === 'level' ? LEVEL_LIVES : null, // 闯关模式剩余生命（§4.8）
+    levelCfg: entryCfg, // 闯关模式当前轮参数（classic 为 null）
     events: createEventState(), // §6.5 随机事件状态（种子驱动，附在 match 上便于快照/上报）
     result: null,
     lastRound: null,
@@ -75,11 +96,30 @@ function nextRound(match, rand) {
   if (match.phase !== 'playing') return match;
   if (match.round && !match.round.done) return match;
   // §6.5 随机事件：检查点在轮间刷新（每轮结束后的停顿内），玩家体感为「下一轮开始冒出事件」。
-  // 触发完全由 rand 驱动 → 同种子同事件序列，每日挑战「同日同题」口径成立。
+  // 触发完全由 rand 驱动 → 同种子同事件序列（闯关模式「每关固定种子」同理，§4.8）。
   const events = maybeTrigger(match.events, match.roundIndex, rand);
   const ev = activeEvent(events);
-  const round = createRound(match.difficulty, rand, ev ? ev.windowScale : undefined);
-  return { ...match, events, round, roundElapsedMs: 0 };
+
+  // 闯关模式：每轮按「关卡 + 局内轮次」重算参数（段数 / 候选 / 窗口 / 对手强度）——
+  // 这就是需求「目标序列随关卡与局内进度变化」「候选集合随之变化」的落地口径（§6.7）。
+  let difficulty = match.difficulty;
+  let ghost = match.ghost;
+  let levelCfg = match.levelCfg;
+  let overrides;
+  if (match.mode === 'level') {
+    levelCfg = levelConfig(match.level, match.roundIndex);
+    difficulty = levelCfg.tier;
+    overrides = { seqLen: levelCfg.seqLen, candidates: levelCfg.candidates, windowMs: levelCfg.windowMs };
+    ghost = {
+      ...match.ghost,
+      oppHit: levelCfg.oppHit,
+      oppMiss: levelCfg.oppMiss,
+      winNetEnergy: levelCfg.winNetEnergy,
+    };
+  }
+
+  const round = createRound(difficulty, rand, ev ? ev.windowScale : undefined, overrides);
+  return { ...match, events, ghost, levelCfg, round, roundElapsedMs: 0 };
 }
 
 /**
@@ -131,10 +171,23 @@ function submit(match, clickedId, dtMs, rand) {
 
   const myEnergy = player.energy;
   const oppEnergy = ghost.state.energy;
-  const px = displacement(myEnergy, oppEnergy);
-  const result = finalResult(myEnergy, oppEnergy, timeUp);
+  // 闯关模式：位移系数按关卡派生（越线阈值 112→72，§6.7）；普通对战保持全局系数（缺省）
+  const isLevel = match.mode === 'level';
+  const factor = isLevel && match.levelCfg ? match.levelCfg.displacementFactor : undefined;
+  const px = displacement(myEnergy, oppEnergy, factor);
+  // 闯关模式：点错 / 超时各扣 1 条生命，3 条耗尽即闯关失败（§4.8；命中不扣）
+  const livesLeft = isLevel ? Math.max(0, match.livesLeft - (correct ? 0 : 1)) : match.livesLeft;
+  // 收官优先级（§2.3）：越线 > 对方越线 > 生命耗尽 > 硬上限（倒计时归零）
+  let result;
+  if (isLevel) {
+    result = finalResult(myEnergy, oppEnergy, false, factor); // 仅「越线」分支（未越线 → null）
+    if (result === null && livesLeft <= 0) result = 'lose';
+    if (result === null && timeUp) result = finalResult(myEnergy, oppEnergy, true, factor);
+  } else {
+    result = finalResult(myEnergy, oppEnergy, timeUp);
+  }
 
-  // 对局一旦收官（越线即时结算 / 硬上限截断）就把本轮一并记为结束：
+  // 对局一旦收官（越线即时结算 / 生命耗尽 / 硬上限截断）就把本轮一并记为结束：
   // 否则最后那一轮不足 N 段却仍计入「未结束」，会破坏服务端
   // 「hits ≤ 轮次 × 序列长度」的一致性上界，误把合法上报判成篡改（见 server/lib/result.js）。
   const roundDone = !correct || cleared >= seqLength || result !== null;
@@ -149,6 +202,7 @@ function submit(match, clickedId, dtMs, rand) {
     round: { ...match.round, seqIndex: cleared, done: roundDone },
     roundElapsedMs: 0,
     px,
+    livesLeft, // 闯关模式剩余生命（classic 恒为 null）
     phase: result ? 'over' : 'playing',
     result,
     lastRound: {
@@ -182,7 +236,9 @@ function shouldFallbackToAI(match, waitedMs) {
 /**
  * 结算摘要（供结算页展示 §4.3 数据面板，以及上报服务端 reportResult）。
  * 命中率以「命中 / (命中 + 失误 + 空轮)」计，无操作时记 0。
- * perfectHits：其中「完美判定」的段数（§6.2 判定分档）；challengeMode：每日挑战局标记（§4.4）。
+ * perfectHits：其中「完美判定」的段数（§6.2 判定分档）。
+ * mode / level / livesLeft：对局模式与闯关进度（§4.8；普通对战 level / livesLeft 为 null）。
+ * challengeMode：每日挑战标记（§4.4 已下线，仅历史兼容，恒 false）。
  * eventsFired / eventIds：本局随机事件的触发次数与序列（§6.5），供服务端上界校验与后续分析。
  */
 function summary(match) {
@@ -191,8 +247,11 @@ function summary(match) {
   const ev = match.events || {};
   return {
     result: match.result,
+    mode: match.mode,
+    level: match.level,
     difficulty: match.difficulty,
     challengeMode: match.challenge === true,
+    livesLeft: match.livesLeft,
     durationMs: match.elapsedMs,
     rounds: match.roundIndex,
     hits: p.hits,

@@ -17,32 +17,38 @@
 const { DIFFICULTY, DEFAULT_DIFFICULTY, BALANCE, WIN_NET_ENERGY } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout } = require('./energy.js');
 
-/** 平衡兜底的绝对阈值 = 比例 × 越线阈值（保持「改一个数，处处跟随」）。 */
-const WIN_LEAD_THRESHOLD = BALANCE.winThresholdRatio * WIN_NET_ENERGY;
-const LOSE_LEAD_THRESHOLD = BALANCE.loseThresholdRatio * WIN_NET_ENERGY;
-
-/** 创建对手状态；非法难度 key 回落默认档。 */
-function createGhost(difficultyKey) {
+/**
+ * 创建对手状态；非法难度 key 回落默认档。
+ * @param {string} difficultyKey easy | normal | hard | hell
+ * @param {{oppHit?:number, oppMiss?:number, winNetEnergy?:number}} [overrides]
+ *   闯关模式覆盖项（§4.8 / §6.7）：命中率 / 失误率取自 core/levels.js#levelConfig（已含陪练弱化），
+ *   越线阈值用于**平衡兜底的比例换算**。缺省时与普通对战完全一致。
+ */
+function createGhost(difficultyKey, overrides) {
   const key = DIFFICULTY[difficultyKey] ? difficultyKey : DEFAULT_DIFFICULTY;
   const diff = DIFFICULTY[key];
+  const o = overrides || {};
   return {
     difficulty: key,
-    oppHit: diff.oppHit,
-    oppMiss: diff.oppMiss,
+    oppHit: o.oppHit === undefined ? diff.oppHit : o.oppHit,
+    oppMiss: o.oppMiss === undefined ? diff.oppMiss : o.oppMiss,
+    winNetEnergy: o.winNetEnergy === undefined ? WIN_NET_ENERGY : o.winNetEnergy,
     state: createEnergyState(),
   };
 }
 
 /**
- * 计入平衡兜底后的实际命中率。
+ * 计入平衡兜底后的实际命中率。阈值以**比例**表达（`BALANCE.*Ratio × 本局越线阈值`，
+ * 普通对战 = 160，闯关模式 = `winNetEnergyOf(level)`，§6.7），保持「改一个数，处处跟随」。
  * @param {object} ghost 对手状态
  * @param {number} playerEnergy 我方当前能量
  */
 function effectiveHitRate(ghost, playerEnergy) {
+  const winNetEnergy = ghost.winNetEnergy === undefined ? WIN_NET_ENERGY : ghost.winNetEnergy;
   const lead = playerEnergy - ghost.state.energy; // 正 = 我方领先
   let rate = ghost.oppHit;
-  if (lead > WIN_LEAD_THRESHOLD) rate += BALANCE.winAid;
-  else if (lead < -LOSE_LEAD_THRESHOLD) rate -= BALANCE.loseAid;
+  if (lead > BALANCE.winThresholdRatio * winNetEnergy) rate += BALANCE.winAid;
+  else if (lead < -BALANCE.loseThresholdRatio * winNetEnergy) rate -= BALANCE.loseAid;
   return Math.max(0, Math.min(1, rate));
 }
 

@@ -24,22 +24,29 @@ function difficultyOf(key) {
  * @param {string} difficultyKey easy | normal | hard | hell
  * @param {() => number} rand 伪随机源（见 core/rng.js）
  * @param {number} [windowScale] 每段输入窗口缩放（§6.5 随机事件「疾风 / 喘息」；缺省 = 1）
+ * @param {{seqLen?:number, candidates?:number, windowMs?:number}} [overrides]
+ *   闯关模式覆盖项（§4.8 / §6.7）：段数 / 候选档位 / 每段窗口取自 core/levels.js#levelConfig。
+ *   缺省时与普通对战完全一致（`SEQUENCE_LENGTH` + 难度档 `candidates/windowMs`）。
  * @returns {{targetIds:string[], seqIndex:number, done:boolean, optionIds:string[], windowMs:number, difficulty:string}}
  */
-function createRound(difficultyKey, rand, windowScale) {
+function createRound(difficultyKey, rand, windowScale, overrides) {
   const difficulty = DIFFICULTY[difficultyKey] ? difficultyKey : DEFAULT_DIFFICULTY;
   const diff = difficultyOf(difficulty);
-  const sequence = pickSequence(SEQUENCE_LENGTH, rand);
+  const o = overrides || {};
+  const seqLen = o.seqLen === undefined ? SEQUENCE_LENGTH : o.seqLen;
+  const candidates = o.candidates === undefined ? diff.candidates : o.candidates;
+  const sequence = pickSequence(seqLen, rand);
   const targetIds = sequence.map((c) => c.id);
-  const distractors = pickDistractors(targetIds, diff.candidates - targetIds.length, rand);
+  const distractors = pickDistractors(targetIds, Math.max(0, candidates - targetIds.length), rand);
   const options = shuffle(sequence.concat(distractors), rand);
   const scale = windowScale === undefined || !(windowScale > 0) ? 1 : windowScale;
+  const baseWindowMs = o.windowMs === undefined ? diff.windowMs : o.windowMs;
   return {
     targetIds,
     seqIndex: 0, // 当前待点段的下标（0 起）
     done: false, // 本轮是否已结束（走完序列 / 点错 / 超时）
     optionIds: options.map((c) => c.id),
-    windowMs: Math.round(diff.windowMs * scale), // **每段**的输入窗口（不是整轮的时长）
+    windowMs: Math.round(baseWindowMs * scale), // **每段**的输入窗口（不是整轮的时长）
     difficulty,
   };
 }

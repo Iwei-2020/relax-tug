@@ -97,9 +97,13 @@ function applyTimeout(state) {
 /**
  * 绳子位移（§2.4 公式）：(我方能量 - 对方能量) × 位移系数，并夹在 ±上限内。
  * 正值 = 绳子被我方拉向己侧。
+ * @param {number} [factor] 位移系数；缺省 = 普通对战的 `DISPLACEMENT_FACTOR`。
+ *   闯关模式传 `levels.displacementFactorOf(level)`（= 220 / winNetEnergyOf(level)，§6.7）——
+ *   「越线 = 位移达 ±上限」的定义一字不变，只换「能量 → 像素」的比例。
  */
-function displacement(myEnergy, oppEnergy) {
-  const raw = (myEnergy - oppEnergy) * DISPLACEMENT_FACTOR;
+function displacement(myEnergy, oppEnergy, factor) {
+  const f = factor === undefined || !(factor > 0) ? DISPLACEMENT_FACTOR : factor;
+  const raw = (myEnergy - oppEnergy) * f;
   return Math.max(-DISPLACEMENT_MAX_PX, Math.min(DISPLACEMENT_MAX_PX, raw));
 }
 
@@ -109,9 +113,10 @@ function displacement(myEnergy, oppEnergy) {
  *   'lose'    位移达到 -上限（对方越线）
  *   'even'    位移落在 ±平局带宽内
  *   'ongoing' 其余（对局继续）
+ * @param {number} [factor] 位移系数（见 displacement）
  */
-function ropeState(myEnergy, oppEnergy) {
-  const px = displacement(myEnergy, oppEnergy);
+function ropeState(myEnergy, oppEnergy, factor) {
+  const px = displacement(myEnergy, oppEnergy, factor);
   if (px >= DISPLACEMENT_MAX_PX) return 'win';
   if (px <= -DISPLACEMENT_MAX_PX) return 'lose';
   if (Math.abs(px) <= DRAW_BAND_PX) return 'even';
@@ -121,9 +126,10 @@ function ropeState(myEnergy, oppEnergy) {
 /**
  * 对局结果（把 'even' 折叠为 'draw'，供结算页直接使用）：
  *   'win' | 'lose' | 'draw' | 'ongoing'
+ * @param {number} [factor] 位移系数（见 displacement）
  */
-function outcome(myEnergy, oppEnergy) {
-  const s = ropeState(myEnergy, oppEnergy);
+function outcome(myEnergy, oppEnergy, factor) {
+  const s = ropeState(myEnergy, oppEnergy, factor);
   return s === 'even' ? 'draw' : s;
 }
 
@@ -132,14 +138,15 @@ function outcome(myEnergy, oppEnergy) {
  *   - 已越线 → 立即结算（抢先判定，不等倒计时）；
  *   - 未越线且未超时 → null（对局继续）；
  *   - 超时 → 按位移比较：偏向谁谁胜，落在带宽内判平局。
+ * @param {number} [factor] 位移系数（见 displacement）
  * @returns {'win'|'lose'|'draw'|null}
  */
-function finalResult(myEnergy, oppEnergy, timeUp) {
-  const s = ropeState(myEnergy, oppEnergy);
+function finalResult(myEnergy, oppEnergy, timeUp, factor) {
+  const s = ropeState(myEnergy, oppEnergy, factor);
   if (s === 'win' || s === 'lose') return s;
   if (!timeUp) return null;
   if (s === 'even') return 'draw';
-  return displacement(myEnergy, oppEnergy) > 0 ? 'win' : 'lose';
+  return displacement(myEnergy, oppEnergy, factor) > 0 ? 'win' : 'lose';
 }
 
 module.exports = {
