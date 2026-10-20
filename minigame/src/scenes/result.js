@@ -15,7 +15,7 @@
  *
  * 闯关模式分支（§4.8）：**不提供复活**（复活中途补命会破坏「3 条生命」口径）——
  * 过关主 CTA 为「下一关」（末关为「已通关全部」，点击回首页），失败主 CTA 为「重试本关」，
- * 次 CTA 恒为「分享战绩」，数据面板额外呈现「关卡 / 剩余生命」。
+ * 次 CTA 恒为「返回选关」，数据面板额外呈现「关卡 / 剩余生命」。
  *
  * 结算情绪设计（§4.3）：失败页给"差一点"的措辞，最大化重开率。
  */
@@ -181,6 +181,7 @@ function makeShardBurst(rng, L) {
  * @param {() => void} options.onRevive 复活续战（仅在普通对战的失败页可用；由 boot 注入续战快照）
  * @param {() => void} [options.onLevelNext] 闯关过关 → 下一关（§4.8）
  * @param {() => void} [options.onLevelRetry] 闯关失败 → 重试本关（§4.8）
+ * @param {() => void} [options.onLevels] 闯关 → 返回选关页（§4.8）
  * @param {() => void} options.onHome 返回首页
  * @param {() => void} [options.onShare] 分享战绩
  */
@@ -197,8 +198,18 @@ function createResultScene(options) {
 
   const isLose = summary.result === 'lose';
   const isWin = summary.result === 'win';
-  const isFinalLevel = isLevel && (summary.level || 0) >= LEVEL_MAX; // 末关（第 100 关）过关 → 已通关全部
-  const title = isWin ? (isLevel ? '过关' : '胜利') : summary.result === 'draw' ? '平局' : isLevel ? '闯关失败' : '失败';
+  const isFinalLevel = isLevel && (summary.level || 0) >= LEVEL_MAX; // 末关（第 100 关）过关 → 全部通关
+  const title = isWin
+    ? isLevel
+      ? isFinalLevel
+        ? '全部通关'
+        : '过关'
+      : '胜利'
+    : summary.result === 'draw'
+      ? '平局'
+      : isLevel
+        ? '闯关失败'
+        : '失败';
   const titleColors = isWin ? MACARON.resultWin : summary.result === 'draw' ? MACARON.resultDraw : MACARON.resultLose;
   const subText = isLose ? almostText(summary) : summary.result === 'draw' ? '势均力敌，再来一局决胜' : '漂亮，保持这个手感';
 
@@ -393,8 +404,9 @@ function createResultScene(options) {
         cache,
       });
 
-      // 次 CTA：普通对战失败页为「再来一局」（避免与「看广告复活」抢焦点），其余为「分享战绩」
-      const secondaryLabel = !isLevel && isLose ? '再来一局' : '分享战绩';
+      // 次 CTA：普通对战失败页为「再来一局」（避免与「看广告复活」抢焦点）；
+      // 闯关模式为「返回选关」（§4.8 主 CTA 已是「下一关 / 重试本关」，选关入口放次级）；其余为「分享战绩」
+      const secondaryLabel = isLevel ? '返回选关' : isLose ? '再来一局' : '分享战绩';
       decor.drawPillButton(ctx, L.secondary, {
         label: secondaryLabel,
         font: `bold ${L.pillFont}px sans-serif`,
@@ -457,7 +469,9 @@ function createResultScene(options) {
         return;
       }
       if (wantSecondary) {
-        if (!isLevel && isLose) replay();
+        if (isLevel) {
+          if (typeof opts.onLevels === 'function') opts.onLevels();
+        } else if (isLose) replay();
         else if (typeof opts.onShare === 'function') opts.onShare();
         return;
       }

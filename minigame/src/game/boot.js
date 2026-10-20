@@ -23,10 +23,12 @@ const { createBattleScene } = require('../scenes/battle.js');
 const { createResultScene } = require('../scenes/result.js');
 const { createShareCardScene } = require('../scenes/share-card.js');
 const { createTasksScene } = require('../scenes/tasks.js');
+const { createLevelsScene } = require('../scenes/levels.js');
 const { shareBattle } = require('../platform/share.js');
+const { showRewardedVideo, AD_UNITS } = require('../platform/ad.js');
 const { setSinkPath, track, EVENTS } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
-const { DEFAULT_DIFFICULTY, LEVEL_MAX } = require('../config/config.js');
+const { DEFAULT_DIFFICULTY } = require('../config/config.js');
 const progression = require('../core/progression.js');
 const tasksCore = require('../core/tasks.js');
 const levelsCore = require('../core/levels.js');
@@ -134,13 +136,43 @@ function boot() {
   }
 
   /**
-   * 进入闯关模式（§4.8）。
-   * 当前实现（C5）：直进「免费可挑战关」（已通关的最大关 + 1；全部通关则进末关）。
-   * C6 将替换为关卡选择页，由用户点选关卡（跳关需看激励视频）。
+   * 进入闯关模式（§4.8）：关卡选择页。
+   * 默认停在「当前可挑战关」所在页；点选关卡交由 pickLevel 判定是否需看广告。
    */
   function openLevels() {
-    const free = levelsCore.freeLevel(player.levels);
-    startLevel(free === null ? LEVEL_MAX : free);
+    game.setScene(
+      createLevelsScene({
+        layout,
+        getState: () => levelsCore.normalizeLevels(player.levels),
+        onPick: pickLevel,
+        onBack: goHome,
+      })
+    );
+  }
+
+  /**
+   * 选关（§4.8）：唯一免费关是「已通关的最大关 + 1」；其它关每次都要看一次激励视频
+   * （**不永久解锁**）。广告位未配置 / 宿主不支持时由 platform/ad 兜底放行，不阻塞。
+   * @param {number} level 关卡号
+   */
+  function pickLevel(level) {
+    const L = levelsCore.clampLevel(level);
+    if (!levelsCore.needsAd(L, player.levels)) {
+      startLevel(L);
+      return;
+    }
+    track(EVENTS.LEVEL_PICK, { level: L, via: 'ad' });
+    showRewardedVideo({
+      unitId: AD_UNITS.levelSkip,
+      scene: 'level_skip',
+      onSuccess: () => {
+        track(EVENTS.LEVEL_SKIP_AD, { level: L });
+        startLevel(L);
+      },
+      onFail: () => {
+        // 广告未看完：停留在选关页，不进入（玩家可重试）
+      },
+    });
   }
 
   /**
@@ -251,6 +283,7 @@ function boot() {
         // §4.8 闯关模式：过关 → 下一关；失败 → 重试本关；两者均无复活（口径：3 条生命）
         onLevelNext: isLevel && lvl !== null ? () => startLevel(lvl + 1) : null,
         onLevelRetry: isLevel && lvl !== null ? () => startLevel(lvl) : null,
+        onLevels: isLevel ? openLevels : null,
         onHome: goHome,
         onShare: () => openShareCard(sum),
       })

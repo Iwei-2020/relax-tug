@@ -250,3 +250,42 @@ test('levelSeed：每关固定、稳定、与 core/rng.hashSeed 同口径', () =
   assert.equal(client.levelSeed(0), client.levelSeed(1));
   assert.equal(client.levelSeed(101), client.levelSeed(100));
 });
+
+/* ── 6. 目标条带带宽（§3.2 三重约束 / §3.3 段数 1–6） ────────────── */
+
+/**
+ * 条带最终绘制宽度：`bandW` 受屏宽 / 中区高度 / 「每段 ≤ segMaxWidth」三重约束，
+ * 其中「每段 ≤132」按本轮**实际段数**收敛（components/palette 实现口径）。
+ */
+function drawnBandW(target, segCount) {
+  const segW = Math.min(target.bandW / segCount, target.segMaxWidth);
+  return segW * segCount;
+}
+
+test('条带带宽：普通对战（3 段）与改造前逐像素一致，闯关 6 段可排布且每段 ≤132', () => {
+  const { computeLayout } = require('../minigame/src/components/theme.js');
+  const { SEQUENCE_LENGTH } = require('../minigame/src/config/config.js');
+  const screens = [
+    [390, 844],
+    [360, 640],
+    [430, 932],
+    [768, 1024],
+    [1024, 1536],
+  ];
+  for (let i = 0; i < screens.length; i += 1) {
+    const [w, h] = screens[i];
+    const L = computeLayout({ windowWidth: w, windowHeight: h, pixelRatio: 2 });
+    // 改造前的口径 = min(屏宽 84%, 中区高 92%, 3 段 × 132)；普通对战必须完全不变
+    const before = Math.min(Math.round(w * 0.84), Math.round(L.mid.h * 0.92), SEQUENCE_LENGTH * 132);
+    assert.equal(drawnBandW(L.target, SEQUENCE_LENGTH), before, `${w}×${h} 普通对战条带宽度不应变化`);
+
+    for (let n = 1; n <= SEQ_LEN_MAX; n += 1) {
+      const bw = drawnBandW(L.target, n);
+      assert.ok(bw / n <= L.target.segMaxWidth + 1e-9, `${w}×${h} 每段宽度不得超过 132（n=${n}）`);
+      assert.ok(bw <= Math.round(w * 0.84) + 1e-9, `${w}×${h} 条带不得超出屏宽 84%（n=${n}）`);
+      assert.ok(bw <= Math.round(L.mid.h * 0.92) + 1e-9, `${w}×${h} 条带不得超出中区高度 92%（n=${n}）`);
+    }
+    // 段数越多 → 条带越宽（6 段不再受 3 段上限压制）
+    assert.ok(drawnBandW(L.target, SEQ_LEN_MAX) >= drawnBandW(L.target, SEQUENCE_LENGTH));
+  }
+});

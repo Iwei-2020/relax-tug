@@ -42,6 +42,7 @@ const EVENTS = {
   MATCH_SETTLED: 'match_settled', // 局外成长与任务进度落账（§4.6 / §4.7：exp / coins / result）
   TASK_CLAIM: 'task_claim', // 领取单条每日任务（§4.7：id / coins）
   TASK_CHEST_CLAIM: 'task_chest_claim', // 领取每日宝箱（§4.7：coins）
+  LEVEL_PICK: 'level_pick', // 选关（§4.8：level / via，via=ad 表示需要看广告的跳关）
   LEVEL_START: 'level_start', // 进入某关（§4.8：level）
   LEVEL_CLEARED: 'level_cleared', // 过关（§4.8：level / livesLeft）
   LEVEL_FAILED: 'level_failed', // 闯关失败（§4.8：level / livesLeft）

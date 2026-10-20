@@ -54,22 +54,25 @@ function drawTarget(ctx, layout, round, view) {
   const seq = round ? round.targetIds : null;
   const n = seq ? seq.length : 0;
   const cleared = round ? Math.min(round.seqIndex, n) : 0;
-  const x = t.cx - t.bandW / 2;
+  // 条带宽度按**本轮实际段数**收敛：每段不超过 segMaxWidth（§3.2 三重约束之三）。
+  // 普通对战 3 段时结果与改造前逐像素一致；闯关模式 1–6 段可自动加宽 / 收窄。
+  const segW = n > 0 ? Math.min(t.bandW / n, t.segMaxWidth || t.bandW) : t.bandW;
+  const bandW = n > 0 ? segW * n : t.bandW;
+  const x = t.cx - bandW / 2;
   const y = t.cy - t.bandH / 2;
-  const segW = n > 0 ? t.bandW / n : t.bandW;
 
   // 条带整体投影（浅底上靠柔和灰蓝投影托起）
   ctx.save();
   chipShadow(ctx, 20, 8);
   ctx.fillStyle = '#8FA3C0';
-  roundRect(ctx, x, y, t.bandW, t.bandH, t.radius);
+  roundRect(ctx, x, y, bandW, t.bandH, t.radius);
   ctx.fill();
   ctx.restore();
 
   if (n > 0) {
     // 逐段填色：clip 到圆角内，段落用 fillRect + 1px 冗余避免出现细缝
     ctx.save();
-    roundRect(ctx, x, y, t.bandW, t.bandH, t.radius);
+    roundRect(ctx, x, y, bandW, t.bandH, t.radius);
     ctx.clip();
     ctx.lineCap = 'butt';
     for (let i = 0; i < n; i += 1) {
@@ -91,14 +94,14 @@ function drawTarget(ctx, layout, round, view) {
     // 顶部玻璃高光
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = '#FFFFFF';
-    roundRect(ctx, x + t.bandW * 0.03, y + t.bandH * 0.06, t.bandW * 0.94, t.bandH * 0.3, t.radius * 0.7);
+    roundRect(ctx, x + bandW * 0.03, y + t.bandH * 0.06, bandW * 0.94, t.bandH * 0.3, t.radius * 0.7);
     ctx.fill();
     ctx.restore();
 
     // 条带整体白描边
     ctx.strokeStyle = '#FFFFFF';
     ctx.lineWidth = 4;
-    roundRect(ctx, x + 2, y + 2, t.bandW - 4, t.bandH - 4, t.radius);
+    roundRect(ctx, x + 2, y + 2, bandW - 4, t.bandH - 4, t.radius);
     ctx.stroke();
 
     // 当前待点段：白色粗描边 + 外发光
@@ -131,11 +134,11 @@ function drawTarget(ctx, layout, round, view) {
   const barH = 12;
   const barY = y + t.bandH + 20;
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  roundRect(ctx, x, barY, t.bandW, barH, barH / 2);
+  roundRect(ctx, x, barY, bandW, barH, barH / 2);
   ctx.fill();
   if (remaining > 0) {
     ctx.fillStyle = remaining > 0.5 ? MACARON.win : remaining > 0.25 ? MACARON.warn : MACARON.lose;
-    roundRect(ctx, x, barY, Math.max(barH, t.bandW * remaining), barH, barH / 2);
+    roundRect(ctx, x, barY, Math.max(barH, bandW * remaining), barH, barH / 2);
     ctx.fill();
   }
 

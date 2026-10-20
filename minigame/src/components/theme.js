@@ -10,7 +10,7 @@
  * 目标分辨率基准：750×1334（§3.4），运行期按真机尺寸自适应。
  */
 
-const { SEQUENCE_LENGTH } = require('../config/config.js');
+const { SEQ_LEN_MAX } = require('../config/config.js');
 
 /**
  * 首页配色（对齐视觉稿：亮蓝天空 + 暖色高光 CTA + 彩色糖果点缀）。
@@ -243,13 +243,17 @@ function computeLayout(sysInfo) {
       badge: { w: badgeW, h: badgeH, y: badgeY },
     },
     // 中部目标区：一条横向彩色条带（§2.2 / §3.2：目标是一段一段的颜色序列）
-    // 宽度受三处约束：屏宽 84%、中部高度的 92%、以及「每段不超过 132 px」。
+    // 宽度受三处约束：屏宽 84%、中部高度的 92%、以及「每段不超过 132 px」
+    // （第三项按最长段数预留上限；最终按本轮实际段数在 components/palette 收敛）。
     target: {
       cx: Math.round(width / 2),
       cy: Math.round(mid.y + mid.h * 0.5),
-      bandW: Math.min(Math.round(width * 0.84), Math.round(mid.h * 0.92), SEQUENCE_LENGTH * 132),
+      bandW: Math.min(Math.round(width * 0.84), Math.round(mid.h * 0.92), SEQ_LEN_MAX * 132),
       bandH: Math.round(Math.min(width * 0.84 * 0.32, mid.h * 0.4)),
       radius: 22,
+      // 单段最大宽度（§3.2 三重约束之一）：按**实际段数**在 components/palette 生效——
+      // 普通对战 3 段时条带宽度与改造前逐像素一致，闯关模式 1–6 段则可撑到 SEQ_LEN_MAX 段。
+      segMaxWidth: 132,
     },
     // 底部候选面板
     bottomArea: {
