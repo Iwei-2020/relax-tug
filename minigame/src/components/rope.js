@@ -419,7 +419,7 @@ function drawBadge(ctx, cx, cy, w, h, fill, label) {
   ctx.restore();
 }
 
-/** 单条阵营能量条（胶囊轨道 + 阵营色填充 + 百分比文字）。 */
+/** 单条能量条（胶囊轨道 + 阵营色填充 + 百分比文字）。 */
 function drawCampBar(ctx, x, y, w, h, color, pct, fromLeft) {
   ctx.save();
   ctx.shadowColor = 'rgba(58,74,107,0.25)';
@@ -430,20 +430,22 @@ function drawCampBar(ctx, x, y, w, h, color, pct, fromLeft) {
   ctx.fill();
   ctx.restore();
 
-  const fillW = Math.max(h, Math.round(w * pct));
-  const fx = fromLeft ? x : x + w - fillW;
+  const fillW = pct <= 0 ? 0 : Math.max(h, Math.round(w * pct));
+  if (fillW > 0) {
+    const fx = fromLeft ? x : x + w - fillW;
 
-  ctx.save();
-  roundRect(ctx, x, y, w, h, h / 2);
-  ctx.clip();
-  ctx.fillStyle = color;
-  roundRect(ctx, fx, y, fillW, h, h / 2);
-  ctx.fill();
-  ctx.globalAlpha = 0.22;
-  ctx.fillStyle = '#FFFFFF';
-  roundRect(ctx, fx + fillW * 0.06, y + h * 0.16, fillW * 0.88, h * 0.34, h * 0.17);
-  ctx.fill();
-  ctx.restore();
+    ctx.save();
+    roundRect(ctx, x, y, w, h, h / 2);
+    ctx.clip();
+    ctx.fillStyle = color;
+    roundRect(ctx, fx, y, fillW, h, h / 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = '#FFFFFF';
+    roundRect(ctx, fx + fillW * 0.06, y + h * 0.16, fillW * 0.88, h * 0.34, h * 0.17);
+    ctx.fill();
+    ctx.restore();
+  }
 
   ctx.strokeStyle = 'rgba(255,255,255,0.95)';
   ctx.lineWidth = 2;
@@ -472,10 +474,23 @@ function drawEnergyBars(ctx, layout, myEnergy, oppEnergy) {
   drawCampBar(ctx, rightX, r.barY, r.barW, r.barH, MACARON.oppDeep, 1 - myPct, false);
 }
 
+/** 闯关模式只展示玩家自己的 0–100% 能量，不绘制对手能量。 */
+function drawLevelEnergyBar(ctx, layout, progressPct) {
+  const r = layout.rope;
+  const x = 20;
+  const w = layout.width - 40;
+  drawCampBar(ctx, x, r.barY, w, r.barH, MACARON.ourDeep, progressPct / 100, true);
+  ctx.fillStyle = MACARON.ink;
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('闯关能量', layout.width / 2, r.barY - 3);
+}
+
 /**
  * 绘制顶部拔河视图（叠加在场景层已铺好的天空之上）。
  * @param {object} view {
- *   px, myEnergy, oppEnergy, phase, countdownLeftMs,
+ *   px, myEnergy, oppEnergy, mode, progressPct, phase, countdownLeftMs,
  *   tMs,                                    // 累计时间，驱动待机动效
  *   impulse, impulseKind, impulseSide       // 命中 / 失误冲击（0~1 衰减）
  * }
@@ -486,9 +501,13 @@ function drawRope(ctx, layout, view) {
   const W = layout.width;
   const t = v.tMs || 0;
   const impulse = Math.max(0, Math.min(1, v.impulse || 0));
-  const kind = v.impulseKind === 'miss' ? 'miss' : 'hit';
+  const levelMode = v.mode === 'level';
+  const progressPct = Math.max(0, Math.min(100, v.progressPct || 0));
 
-  const px = Math.max(-r.maxPx, Math.min(r.maxPx, v.px || 0));
+  const px = levelMode
+    ? (progressPct / 100) * r.maxPx
+    : Math.max(-r.maxPx, Math.min(r.maxPx, v.px || 0));
+  const kind = !levelMode && v.impulseKind === 'miss' ? 'miss' : 'hit';
   const leanOwn = r.maxPx ? Math.max(-1, Math.min(1, px / r.maxPx)) : 0;
 
   drawGround(ctx, layout, r.cx + px, impulse, kind);
@@ -535,17 +554,17 @@ function drawRope(ctx, layout, view) {
   // 顶部阵营徽章
   const b = r.badge;
   drawBadge(ctx, 20 + b.w / 2, b.y, b.w, b.h, MACARON.badgeOur, '我方');
-  drawBadge(ctx, W - 20 - b.w / 2, b.y, b.w, b.h, MACARON.badgeOpp, '对方');
+  drawBadge(ctx, W - 20 - b.w / 2, b.y, b.w, b.h, MACARON.badgeOpp, levelMode ? '目标' : '对方');
 
-  // 底部两条百分比能量条
-  drawEnergyBars(ctx, layout, v.myEnergy || 0, v.oppEnergy || 0);
+  if (levelMode) drawLevelEnergyBar(ctx, layout, progressPct);
+  else drawEnergyBars(ctx, layout, v.myEnergy || 0, v.oppEnergy || 0);
 
   // 即将越线：靠近我方 → 暖色描边脉冲；对手靠近 → 警示描边
-  if (px >= r.maxPx * 0.8) {
+  if (!levelMode && px >= r.maxPx * 0.8) {
     ctx.strokeStyle = 'rgba(255,180,61,0.75)';
     ctx.lineWidth = 12;
     ctx.strokeRect(0, 0, W, layout.height);
-  } else if (px <= -r.maxPx * 0.8) {
+  } else if (!levelMode && px <= -r.maxPx * 0.8) {
     ctx.strokeStyle = 'rgba(255,122,138,0.7)';
     ctx.lineWidth = 12;
     ctx.strokeRect(0, 0, W, layout.height);

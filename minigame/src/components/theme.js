@@ -3,7 +3,7 @@
 /**
  * 布局与主题（《项目说明书》§2.1 界面分区 + §3.4 全局视觉规范）
  *
- * 三分区固定比例 **4 : 4 : 2**（顶部拔河视图 : 中部目标区 : 底部选色面板）。
+ * 三分区自适应比例 **3 : 3 : 4**（顶部拔河视图 : 中部目标区 : 底部选色面板）。
  * 所有尺寸均以**逻辑像素**计算（画布按 devicePixelRatio 另行缩放），
  * 并显式扣除安全区（刘海屏顶部 / 全面屏底部 Home 条），保证 16:9 ~ 21:9 宽高比不错位。
  *
@@ -145,12 +145,12 @@ const OPP_OUTFITS = ['#61C2F2', '#3FD0A0', '#8C9BFF'];
 /** 发色（错开，避免三胞胎观感）。 */
 const HAIRS = ['#3B2B24', '#241C16', '#6B4A2F'];
 
-/** 分区比例（§2.1）。 */
-const SPLIT = { top: 0.4, mid: 0.4, bottom: 0.2 };
+/** 分区比例：略微缩小候选区，将空间还给顶部拔河区。 */
+const SPLIT = { top: 0.32, mid: 0.3, bottom: 0.38 };
 
 /** 最小可点击热区（§2.1：逻辑像素 ≥ 88×88，间距 ≥ 12）。 */
 const MIN_TOUCH = 88;
-const GAP = 12;
+const GAP = 10;
 
 /**
  * 计算底部候选色网格（支持 4 / 6 / 9 个候选，§6.4）。
@@ -160,10 +160,10 @@ const GAP = 12;
 function paletteGrid(area, count) {
   const cols = count <= 4 ? 2 : 3;
   const rows = Math.max(1, Math.ceil(count / cols));
-  const padX = 16;
+  const padX = 12;
   const cellW = Math.floor((area.w - padX * 2 - GAP * (cols - 1)) / cols);
   const cellH = Math.floor((area.h - GAP * (rows - 1)) / rows);
-  const cell = Math.max(MIN_TOUCH, Math.min(cellW, cellH));
+  const cell = Math.max(1, Math.floor(Math.min(cellW, cellH) * 0.98));
   const gridW = cell * cols + GAP * (cols - 1);
   const gridH = cell * rows + GAP * (rows - 1);
   const x0 = Math.round(area.x + (area.w - gridW) / 2);
@@ -208,9 +208,9 @@ function computeLayout(sysInfo) {
   const ropeMargin = 34;
   const maxPx = Math.min(220, Math.round((width - ropeMargin * 2) / 2) - 40);
   // 地平线在上方约 30% 处，其下为透视地面（阵营染色 + 角色站位）
-  const horizonY = Math.round(top.y + top.h * 0.3);
+  const horizonY = Math.round(top.y + top.h * 0.27);
   // 绳子高度：与角色肩部齐平（角色握绳的手落在肩高）
-  const ropeY = Math.round(top.y + top.h * 0.56);
+  const ropeY = Math.round(top.y + top.h * 0.52);
   // 能量条移到底部两侧（对齐示例图），给天空/地面/角色腾出空间
   const barH = 20;
   const barW = Math.round((width - 40) * 0.42);
@@ -247,9 +247,9 @@ function computeLayout(sysInfo) {
     // （第三项按最长段数预留上限；最终按本轮实际段数在 components/palette 收敛）。
     target: {
       cx: Math.round(width / 2),
-      cy: Math.round(mid.y + mid.h * 0.5),
+      cy: Math.round(mid.y + mid.h * 0.43),
       bandW: Math.min(Math.round(width * 0.84), Math.round(mid.h * 0.92), SEQ_LEN_MAX * 132),
-      bandH: Math.round(Math.min(width * 0.84 * 0.32, mid.h * 0.4)),
+      bandH: Math.round(Math.min(width * 0.84 * 0.32, mid.h * 0.34)),
       radius: 22,
       // 单段最大宽度（§3.2 三重约束之一）：按**实际段数**在 components/palette 生效——
       // 普通对战 3 段时条带宽度与改造前逐像素一致，闯关模式 1–6 段则可撑到 SEQ_LEN_MAX 段。
@@ -257,10 +257,10 @@ function computeLayout(sysInfo) {
     },
     // 底部候选面板
     bottomArea: {
-      x: bottom.x + 8,
-      y: bottom.y + 8,
-      w: bottom.w - 16,
-      h: bottom.h - 8 - safeBottom,
+      x: bottom.x + 6,
+      y: bottom.y + 6,
+      w: bottom.w - 12,
+      h: bottom.h - 6 - safeBottom,
     },
   };
 }

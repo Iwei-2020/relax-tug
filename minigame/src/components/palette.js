@@ -49,7 +49,7 @@ function drawTarget(ctx, layout, round, view) {
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  ctx.fillText('目标颜色序列', t.cx, layout.mid.y + 16);
+  ctx.fillText('目标颜色序列', t.cx, layout.mid.y + 38);
 
   const seq = round ? round.targetIds : null;
   const n = seq ? seq.length : 0;
@@ -104,29 +104,6 @@ function drawTarget(ctx, layout, round, view) {
     roundRect(ctx, x + 2, y + 2, bandW - 4, t.bandH - 4, t.radius);
     ctx.stroke();
 
-    // 当前待点段：白色粗描边 + 外发光
-    if (cleared < n) {
-      ctx.save();
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 6;
-      ctx.shadowColor = 'rgba(255,255,255,0.95)';
-      ctx.shadowBlur = 18;
-      roundRect(ctx, x + cleared * segW + 2, y + 2, Math.max(8, segW - 4), t.bandH - 4, t.radius * 0.6);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // 完美判定（§7.1）：刚点过的段追加金色描边 + 外发光，与普通命中一眼可辨
-    if (v.perfect && cleared > 0) {
-      ctx.save();
-      ctx.strokeStyle = MACARON.warn;
-      ctx.lineWidth = 6;
-      ctx.shadowColor = 'rgba(255,180,61,0.95)';
-      ctx.shadowBlur = 20;
-      roundRect(ctx, x + (cleared - 1) * segW + 2, y + 2, Math.max(8, segW - 4), t.bandH - 4, t.radius * 0.6);
-      ctx.stroke();
-      ctx.restore();
-    }
   }
 
   // 当前段的剩余时间（条状，颜色由绿渐变到红）
@@ -164,7 +141,8 @@ function drawTarget(ctx, layout, round, view) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.fillText(
-    v.perfect ? '完美！反应真快' : n > 0 ? `按顺序点下方同色块（${cleared}/${n}）` : '按顺序点下方同色块',
+    v.statusText ||
+      (v.perfect ? '完美！反应真快' : n > 0 ? `按顺序点下方同色块（${cleared}/${n}）` : '按顺序点下方同色块'),
     t.cx,
     barY + barH + 10,
   );
