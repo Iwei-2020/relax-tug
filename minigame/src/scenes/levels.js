@@ -19,6 +19,7 @@
 const { HOME, MACARON, MIN_TOUCH } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { roundRect } = require('../components/shape.js');
+const audio = require('../platform/audio.js');
 
 const COLS = 4;
 const ROWS = 5;
@@ -338,18 +339,22 @@ function createLevelsScene(options) {
       pressed = null;
       if (!target) return;
       if (target === 'prev') {
+        audio.play('tap');
         flip(-1);
         return;
       }
       if (target === 'next') {
+        audio.play('tap');
         flip(1);
         return;
       }
       if (target === 'back') {
+        audio.play('tap');
         if (typeof opts.onBack === 'function') opts.onBack();
         return;
       }
       // 瓦片：先刷新进度（服务端回执可能刚覆盖），再上报给 boot 判定是否需看广告
+      audio.play('tap');
       refresh();
       const index = Number(target.slice('tile:'.length));
       if (typeof opts.onPick === 'function') opts.onPick(levelAt(index));
@@ -357,4 +362,4 @@ function createLevelsScene(options) {
   };
 }
 
-module.exports = { createLevelsScene };
+module.exports = { createLevelsScene, computeLevelsLayout };

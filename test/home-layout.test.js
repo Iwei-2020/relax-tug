@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { computeHomeLayout, createHomeScene } = require('../minigame/src/scenes/home.js');
+const audio = require('../minigame/src/platform/audio.js');
 
 const viewports = [
   { width: 360, height: 640 },
@@ -62,4 +63,44 @@ test('首页纵向 CTA 的触摸热区重叠时仍触发最近入口，不再触
     assert.equal(calls[key], 1, `${key} 入口应命中自身回调`);
   }
   assert.equal(calls.share, 0, '首页不保留分享战绩回调入口');
+});
+
+test('首页音效开关位于资料卡右上角并可切换静音状态', () => {
+  const viewport = viewports[1];
+  const layout = computeHomeLayout(viewport);
+  const toggle = layout.soundToggle;
+  assert.ok(toggle.x >= layout.card.x + layout.card.w * 0.75, '开关靠近资料卡右上角');
+  assert.ok(toggle.x + toggle.w <= layout.card.x + layout.card.w, '开关不超出资料卡');
+  assert.ok(toggle.y >= layout.card.y && toggle.y + toggle.h <= layout.card.y + layout.card.h);
+
+  const storage = {};
+  globalThis.GameGlobal = {
+    tt: {
+      getStorageSync(key) { return Object.hasOwn(storage, key) ? storage[key] : ''; },
+      setStorageSync(key, value) { storage[key] = value; },
+      createInnerAudioContext() {
+        return {
+          play() {},
+          stop() {},
+          onEnded() {},
+          onError() {},
+        };
+      },
+    },
+  };
+
+  try {
+    const scene = createHomeScene({ layout: viewport });
+    const x = toggle.x + toggle.w / 2;
+    const y = toggle.y + toggle.h / 2;
+    scene.onTouchStart(x, y);
+    scene.onTouchEnd(x, y);
+    assert.equal(storage[audio.STORAGE_KEY], false, '首次点击关闭音效并保存状态');
+    scene.onTouchStart(x, y);
+    scene.onTouchEnd(x, y);
+    assert.equal(storage[audio.STORAGE_KEY], true, '再次点击恢复音效并保存状态');
+  } finally {
+    audio.destroy();
+    delete globalThis.GameGlobal;
+  }
 });

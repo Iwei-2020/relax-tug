@@ -19,6 +19,7 @@
 
 const { HOME, MIN_TOUCH } = require('../components/theme.js');
 const decor = require('../components/decor.js');
+const audio = require('../platform/audio.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 
 /** 首页几何（全部按屏宽/屏高比例推导，适配 16:9 ~ 21:9）。 */
@@ -35,6 +36,12 @@ function computeHomeLayout(layout) {
     w: cardW,
     h: cardH,
     r: Math.round(W * 0.077),
+  };
+  const soundToggle = {
+    x: Math.round(card.x + card.w - W * 0.13),
+    y: Math.round(card.y + H * 0.014),
+    w: Math.round(Math.min(W * 0.09, 38)),
+    h: Math.round(Math.min(W * 0.09, 38)),
   };
 
   const mainH = Math.round(H * 0.086);
@@ -62,6 +69,7 @@ function computeHomeLayout(layout) {
     ctaFont: Math.round(Math.min(W * 0.085, 34)),
     pillFont: Math.round(Math.min(W * 0.074, 30)),
     card,
+    soundToggle,
     main,
     challenge,
     levels,
@@ -77,6 +85,50 @@ function touchRect(rect) {
 
 function hit(rect, x, y) {
   return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+function drawSoundToggle(ctx, rect, enabled, pressed) {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const scale = rect.w / 38;
+
+  ctx.save();
+  ctx.fillStyle = pressed ? 'rgba(255,255,255,0.78)' : 'rgba(255,255,255,0.38)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rect.w / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 2.4 * scale;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - 10 * scale, cy - 4 * scale);
+  ctx.lineTo(cx - 5 * scale, cy - 4 * scale);
+  ctx.lineTo(cx + 1 * scale, cy - 9 * scale);
+  ctx.lineTo(cx + 1 * scale, cy + 9 * scale);
+  ctx.lineTo(cx - 5 * scale, cy + 4 * scale);
+  ctx.lineTo(cx - 10 * scale, cy + 4 * scale);
+  ctx.closePath();
+  ctx.fill();
+
+  if (enabled) {
+    ctx.beginPath();
+    ctx.arc(cx - 3 * scale, cy, 11 * scale, -0.72, 0.72);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(cx + 5 * scale, cy - 5 * scale);
+    ctx.lineTo(cx + 12 * scale, cy + 5 * scale);
+    ctx.moveTo(cx + 12 * scale, cy - 5 * scale);
+    ctx.lineTo(cx + 5 * scale, cy + 5 * scale);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /** 标题渐变（缓存，避免每帧新建渐变对象）。 */
@@ -109,11 +161,13 @@ function createHomeScene(options) {
   const hitMain = touchRect(L.main);
   const hitChallenge = touchRect(L.challenge);
   const hitLevels = touchRect(L.levels);
+  const hitSound = touchRect(L.soundToggle);
   let pressed = null;
   let tMs = 0;
 
   /** 扩大的触摸区域可能重叠，取命中区域内中心距离最近的按钮。 */
   function targetAt(x, y) {
+    if (hit(hitSound, x, y)) return 'sound';
     const targets = [
       { id: 'main', hitRect: hitMain, centerY: L.main.y + L.main.h / 2 },
       { id: 'challenge', hitRect: hitChallenge, centerY: L.challenge.y + L.challenge.h / 2 },
@@ -188,6 +242,7 @@ function createHomeScene(options) {
         card.y + card.h * 0.58
       );
       ctx.restore();
+      drawSoundToggle(ctx, L.soundToggle, audio.isEnabled(), pressed === 'sound');
 
       // 主 CTA（带轻微呼吸浮动）与次级入口
       decor.drawCtaButton(ctx, L.main, {
@@ -225,12 +280,20 @@ function createHomeScene(options) {
     onTouchEnd(x, y) {
       const target = targetAt(x, y);
       pressed = null;
-      if (target === 'main') {
+      if (target === 'sound') {
+        const wasEnabled = audio.isEnabled();
+        if (wasEnabled) audio.play('tap');
+        const nowEnabled = audio.toggle();
+        if (!wasEnabled && nowEnabled) audio.play('tap');
+      } else if (target === 'main') {
+        audio.play('tap');
         track(EVENTS.MATCH_START, { from: 'home' });
         if (typeof opts.onStart === 'function') opts.onStart();
       } else if (target === 'challenge') {
+        audio.play('tap');
         if (typeof opts.onChallenge === 'function') opts.onChallenge();
       } else if (target === 'levels') {
+        audio.play('tap');
         if (typeof opts.onLevels === 'function') opts.onLevels();
       }
     },

@@ -9,8 +9,9 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "gen": "node tools/gen-constants.js && node tools/gen-cloud-functions.js",
-    "gen:check": "node tools/gen-constants.js --check && node tools/gen-cloud-functions.js --check",
+    "gen": "node tools/gen-constants.js && node tools/gen-cloud-functions.js && node tools/gen-audio.js",
+    "gen:check": "node tools/gen-constants.js --check && node tools/gen-cloud-functions.js --check && node tools/gen-audio.js --check",
+    "audio:gen": "node tools/gen-audio.js",
     "sim": "node tools/sim-balance.js",
     "sim:check": "node tools/sim-balance.js --check",
     "sim:levels": "node tools/sim-levels.js --baseline",

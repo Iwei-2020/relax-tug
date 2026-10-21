@@ -26,6 +26,7 @@ const { HIT_ENERGY, COMBO_BONUS_MAX, LEVEL_LIVES, LEVEL_MAX } = require('../conf
 const { createRng } = require('../core/rng.js');
 const { findEvent } = require('../core/events.js');
 const { track } = require('../utils/tracker.js');
+const audio = require('../platform/audio.js');
 
 /** 结果动画时长（§4.3「撒花 / 破碎」）：到期后粒子自然隐去，不再绘制。 */
 const BURST_MS = 1600;
@@ -229,6 +230,7 @@ function createResultScene(options) {
 
   const isLose = summary.result === 'lose';
   const isWin = summary.result === 'win';
+  audio.play(isWin ? 'win' : summary.result === 'draw' ? 'draw' : 'lose');
   const isFinalLevel = isLevel && (summary.level || 0) >= LEVEL_MAX; // 末关（第 100 关）过关 → 全部通关
   const title = isWin
     ? isLevel
@@ -301,6 +303,7 @@ function createResultScene(options) {
   let shakeLeftMs = isLose ? SHAKE_MS : 0;
 
   function replay() {
+    audio.play('tap');
     track('replay_click', { result: summary.result });
     if (typeof opts.onReplay === 'function') opts.onReplay((message) => { hintText = message || ''; });
   }
@@ -472,6 +475,7 @@ function createResultScene(options) {
 
       if (target === 'main') {
         if (isLevel) {
+          audio.play('tap');
           // §4.8 闯关模式：过关进下一关（末关回首页），失败重试本关
           if (isWin) {
             if (isFinalLevel) {
@@ -482,10 +486,14 @@ function createResultScene(options) {
         return;
       }
       if (target === 'secondary') {
+        audio.play('tap');
         if (typeof opts.onLevels === 'function') opts.onLevels();
         return;
       }
-      if (target === 'home' && typeof opts.onHome === 'function') opts.onHome();
+      if (target === 'home') {
+        audio.play('tap');
+        if (typeof opts.onHome === 'function') opts.onHome();
+      }
     },
   };
 }

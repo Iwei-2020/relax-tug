@@ -16,6 +16,7 @@
  */
 
 const ttApi = require('../platform/tt.js');
+const audio = require('../platform/audio.js');
 const { computeLayout } = require('../components/theme.js');
 const { createGame } = require('./loop.js');
 const { createHomeScene } = require('../scenes/home.js');
@@ -38,6 +39,7 @@ function boot() {
   const ctx = ttApi.createContext(canvas);
   const layout = computeLayout(sysInfo);
 
+  audio.init();
   const game = createGame({ canvas, ctx, layout, sysInfo });
 
   // 埋点上报路径：未接入云端时为空字符串，埋点仅在本地输出，不影响对局

@@ -25,9 +25,10 @@ const {
   summary,
 } = require('../core/battle.js');
 const { activeEvent } = require('../core/events.js');
-const { ROUND_GAP_MS, GAME_HARD_LIMIT_MS, LEVEL_LIVES } = require('../config/config.js');
+const { ROUND_GAP_MS, GAME_HARD_LIMIT_MS, LEVEL_LIVES, DISPLACEMENT_MAX_PX } = require('../config/config.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 const ttApi = require('../platform/tt.js');
+const audio = require('../platform/audio.js');
 
 /** 结算前的结果展示延时（越线动画 §7.2 约 400ms，这里留 600ms 让玩家看清） */
 const END_DELAY_MS = 600;
@@ -121,6 +122,7 @@ function createBattleScene(options) {
     mode: opts.mode,
     level: opts.level,
   });
+  if (match.phase === 'countdown') audio.play('countdown');
   let roundLeftMs = 0;
   let gapLeftMs = 0;
   let endDelayMs = 0;
@@ -138,6 +140,7 @@ function createBattleScene(options) {
   let eventPopLeftMs = 0; // 随机事件横幅脉冲剩余时长
   // 拔河视图的动效状态：累计时间驱动待机律动，impulse 驱动命中/失误冲击
   let tMs = 0;
+  let countdownSecond = match.phase === 'countdown' ? Math.ceil(match.countdownLeftMs / 1000) : 0;
   let impulseLeftMs = 0;
   let impulseKind = 'hit';
   const cache = {}; // 天空渐变缓存（只建一次）
@@ -166,6 +169,7 @@ function createBattleScene(options) {
       eventPopLeftMs = EVENT_POP_MS;
       const ev = activeEvent(match.events);
       ttApi.vibrateShort();
+      audio.play('event');
       track(EVENTS.RANDOM_EVENT, { id: ev ? ev.id : '', round: match.roundIndex });
     }
   }
@@ -190,8 +194,26 @@ function createBattleScene(options) {
   function resolve(clickedId) {
     const beforeRound = match.roundIndex;
     const beforeSeq = match.round ? match.round.seqIndex : 0;
+    const previousPx = match.px;
     match = submit(match, clickedId, spentMs, rand);
     spentMs = 0;
+
+    const last = match.lastRound;
+    if (last && last.kind === 'hit') {
+      audio.play(last.perfect ? 'perfect' : 'hit');
+      if ([3, 5, 8].includes(last.comboAfter)) audio.play('combo');
+    } else if (last && last.kind === 'miss') {
+      audio.play('miss');
+    } else if (last && last.kind === 'timeout') {
+      audio.play('timeout');
+    }
+
+    if (
+      Math.abs(previousPx) < DISPLACEMENT_MAX_PX * 0.65 &&
+      Math.abs(match.px) >= DISPLACEMENT_MAX_PX * 0.65
+    ) {
+      audio.play('tension');
+    }
 
     if (isOver(match)) {
       endDelayMs = END_DELAY_MS;
@@ -202,7 +224,6 @@ function createBattleScene(options) {
     const roundEnded = match.roundIndex !== beforeRound;
     if (!seqAdvanced && !roundEnded) return; // 未发生结算（无当前轮）
 
-    const last = match.lastRound;
     if (last.kind === 'hit') {
       hitIndex = match.round.optionIds.indexOf(last.clickedId);
       comboPop = last.comboAfter >= 3 ? 0.35 : 0.2;
@@ -248,7 +269,11 @@ function createBattleScene(options) {
 
       if (match.phase === 'countdown') {
         match = advanceCountdown(match, dt);
+        const nextSecond = Math.ceil(match.countdownLeftMs / 1000);
+        if (nextSecond > 0 && nextSecond < countdownSecond) audio.play('countdown');
+        countdownSecond = nextSecond;
         if (match.phase === 'playing') {
+          audio.play('start');
           match = nextRound(match, rand);
           refreshRound();
           spentMs = 0;
@@ -411,7 +436,7 @@ function createBattleScene(options) {
       return match;
     },
 
-    /** 重开一局；普通对战立即进入，闯关保留开场倒计时。 */
+    /** 重开一局，重新播放 3 秒开场倒计时。 */
     reset() {
       match = createMatch({
         difficulty: opts.difficulty,
@@ -432,6 +457,8 @@ function createBattleScene(options) {
       lastFired = 0;
       eventPopLeftMs = 0;
       tMs = 0;
+      countdownSecond = match.phase === 'countdown' ? Math.ceil(match.countdownLeftMs / 1000) : 0;
+      if (match.phase === 'countdown') audio.play('countdown');
       if (match.phase === 'playing') {
         match = nextRound(match, rand);
         refreshRound();

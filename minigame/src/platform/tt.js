@@ -129,6 +129,17 @@ function getStorageSync(key, fallback) {
   }
 }
 
+/** 创建音频上下文；平台未提供音频能力时返回 null。 */
+function createInnerAudioContext() {
+  const tt = getTt();
+  if (!tt || typeof tt.createInnerAudioContext !== 'function') return null;
+  try {
+    return tt.createInnerAudioContext();
+  } catch (err) {
+    return null;
+  }
+}
+
 /** 轻震动反馈（§7.1；用户可在设置里关闭）。 */
 function vibrateShort() {
   const tt = getTt();
@@ -217,6 +228,7 @@ module.exports = {
   now,
   setStorageSync,
   getStorageSync,
+  createInnerAudioContext,
   vibrateShort,
   createOffscreenCanvas,
   exportCanvasToTempFile,
