@@ -35,6 +35,17 @@ const BURST_MS = 1600;
 const SHAKE_MS = 260;
 /** 粒子渐隐时长（乘 BURST_MS 之后）。 */
 const BURST_FADE_MS = 420;
+/** Each result row uses a vivid macaron label and a darker matching value color. */
+const RESULT_ROW_COLORS = [
+  { label: '#E95E9D', value: '#B52F70' },
+  { label: '#E9893E', value: '#A95719' },
+  { label: '#438FDC', value: '#285F9B' },
+  { label: '#31AA8B', value: '#176F5E' },
+  { label: '#9167D4', value: '#5F3D9A' },
+  { label: '#E25B73', value: '#A9364E' },
+  { label: '#249DB6', value: '#176A7C' },
+  { label: '#C18428', value: '#81530F' },
+];
 
 /** "差一点"文案：按净能量差给不同措辞（§4.3）。阈值按能量尺度派生，避免阈值重标定后永远落到最后一档。 */
 function almostText(summary) {
@@ -56,25 +67,25 @@ function computeResultLayout(layout, rowCount) {
 
   const rows = rowCount || 6;
   const panelW = Math.round(Math.min(W * 0.836, 340));
-  const rowH = Math.round(H * (rows > 6 ? 0.033 : 0.039));
-  const padH = Math.round(H * 0.022);
+  const rowH = Math.round(H * (rows > 6 ? 0.035 : 0.043));
+  const padH = Math.round(H * 0.024);
   const panel = {
     x: Math.round(cx - panelW / 2),
-    y: Math.round(H * (rows > 6 ? 0.278 : 0.3)),
+    y: Math.round(H * (rows > 6 ? 0.31 : 0.32)),
     w: panelW,
     h: rows * rowH + padH * 2,
     r: Math.round(W * 0.051),
   };
 
-  const mainH = Math.round(H * 0.095);
+  const mainH = Math.round(H * 0.09);
   const mainW = Math.round(W * 0.72);
-  const main = { x: Math.round(cx - mainW / 2), y: Math.round(H * 0.6), w: mainW, h: mainH };
+  const main = { x: Math.round(cx - mainW / 2), y: Math.round(H * 0.66), w: mainW, h: mainH };
 
-  const secH = Math.round(H * 0.075);
+  const secH = Math.round(H * 0.07);
   const secW = Math.round(W * 0.62);
-  const secondary = { x: Math.round(cx - secW / 2), y: main.y + mainH + Math.round(H * 0.019), w: secW, h: secH };
+  const secondary = { x: Math.round(cx - secW / 2), y: main.y + mainH + Math.round(H * 0.025), w: secW, h: secH };
 
-  const home = { x: Math.round(cx - 70), y: Math.round(H * 0.885), w: 140, h: 48 };
+  const home = { x: Math.round(cx - 70), y: Math.round(H * 0.89), w: 140, h: 48 };
 
   return {
     W,
@@ -211,7 +222,13 @@ function createResultScene(options) {
         ? '闯关失败'
         : '失败';
   const titleColors = isWin ? MACARON.resultWin : summary.result === 'draw' ? MACARON.resultDraw : MACARON.resultLose;
-  const subText = isLose ? almostText(summary) : summary.result === 'draw' ? '势均力敌，再来一局决胜' : '漂亮，保持这个手感';
+  const subText = isLose
+    ? isLevel
+      ? '能量未达到 100%，再试一次'
+      : almostText(summary)
+    : summary.result === 'draw'
+      ? '势均力敌，再来一局决胜'
+      : '漂亮，保持这个手感';
 
   // 随机事件标记（§6.5）：本局触发过则展示金色胶囊（次数 + 事件名序列）。
   // 文本在场景创建时算一次，避免帧内新建字符串/数组（§5.4）。
@@ -238,7 +255,7 @@ function createResultScene(options) {
         ['最高连击', String(summary.bestCombo || 0)],
         ['命中率', `${Math.round((summary.accuracy || 0) * 100)}%`],
         ['对局时长', `${((summary.durationMs || 0) / 1000).toFixed(1)}s`],
-        ['净能量差', String(summary.netEnergy || 0)],
+        ['能量进度', `${summary.energyPct || 0}%`],
       ]
     : [
         ['命中次数', String(summary.hits || 0)],
@@ -367,10 +384,10 @@ function createResultScene(options) {
         ctx.font = `${L.rowFont}px sans-serif`;
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        ctx.fillStyle = MACARON.inkDim;
+        ctx.fillStyle = RESULT_ROW_COLORS[i % RESULT_ROW_COLORS.length].label;
         ctx.fillText(rows[i][0], rowX, y);
         ctx.textAlign = 'right';
-        ctx.fillStyle = MACARON.ink;
+        ctx.fillStyle = RESULT_ROW_COLORS[i % RESULT_ROW_COLORS.length].value;
         ctx.font = `bold ${L.rowFont}px sans-serif`;
         ctx.fillText(rows[i][1], rowRight, y);
         if (i < rows.length - 1) {
@@ -480,4 +497,4 @@ function createResultScene(options) {
   };
 }
 
-module.exports = { createResultScene };
+module.exports = { createResultScene, computeResultLayout };
