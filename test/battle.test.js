@@ -51,29 +51,27 @@ function playOut(match, rand, decide) {
   return m;
 }
 
-test('普通对战开局直接进入 playing，无总倒计时', () => {
+test('普通对战恢复 3 秒开场倒计时', () => {
   const m = createMatch({ difficulty: 'normal' });
-  assert.equal(m.phase, 'playing');
-  assert.equal(m.countdownLeftMs, 0);
+  assert.equal(m.phase, 'countdown');
+  assert.equal(m.countdownLeftMs, COUNTDOWN_MS);
   assert.equal(m.player.energy, 0);
   assert.equal(m.ghost.state.energy, 0);
   assert.equal(m.result, null);
   assert.equal(m.rankId, 'bronze');
 });
 
-test('闯关仍保留开场倒计时，普通对战倒计时推进无效', () => {
-  const classic = createMatch({});
-  assert.equal(advanceCountdown(classic, COUNTDOWN_MS), classic);
-
-  let m = createMatch({ mode: 'level', level: 1 });
-  assert.equal(m.phase, 'countdown');
-  assert.equal(m.countdownLeftMs, COUNTDOWN_MS);
-  m = advanceCountdown(m, COUNTDOWN_MS - 100);
-  assert.equal(m.phase, 'countdown', '未归零前仍处于倒计时');
-
-  m = advanceCountdown(m, 500);
-  assert.equal(m.phase, 'playing');
-  assert.equal(m.countdownLeftMs, 0);
+test('普通对战与闯关模式倒计时归零后都进入 playing', () => {
+  for (const options of [{}, { mode: 'level', level: 1 }]) {
+    let m = createMatch(options);
+    assert.equal(m.phase, 'countdown');
+    assert.equal(m.countdownLeftMs, COUNTDOWN_MS);
+    m = advanceCountdown(m, COUNTDOWN_MS - 100);
+    assert.equal(m.phase, 'countdown', '未归零前仍处于倒计时');
+    m = advanceCountdown(m, 500);
+    assert.equal(m.phase, 'playing');
+    assert.equal(m.countdownLeftMs, 0);
+  }
 
   const jumped = beginPlaying(createMatch({}));
   assert.equal(jumped.phase, 'playing');

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createMatch, nextRound, submit } = require('../minigame/src/core/battle.js');
+const { createMatch, beginPlaying, nextRound, submit } = require('../minigame/src/core/battle.js');
 const { createRng } = require('../minigame/src/core/rng.js');
 const classicMode = require('../minigame/src/core/classic.js');
 const { CLASSIC_MODE, PROGRESSION } = require('../minigame/src/config/config.js');
@@ -37,7 +37,7 @@ test('普通对战局内难度与能量倍率随时长升高，90 秒后保持�
 test('普通对战实际命中能量随对局时长增大', () => {
   const hitAt = (elapsedMs) => {
     const rand = createRng(77);
-    let match = nextRound(createMatch({ rankId: 'bronze' }), rand);
+    let match = nextRound(beginPlaying(createMatch({ rankId: 'bronze' })), rand);
     match = { ...match, elapsedMs };
     const target = match.round.targetIds[match.round.seqIndex];
     return submit(match, target, 100, rand).player.lastGain;

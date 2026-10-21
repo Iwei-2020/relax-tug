@@ -389,8 +389,8 @@ function createBattleScene(options) {
       // 闯关模式 HUD（§4.8）：关卡号 + 剩余机会（普通对战不呈现）
       if (match.mode === 'level') drawLevelHud(ctx, layout, match);
 
-      // 仅闯关模式保留 3-2-1 开场；普通对战直接开始。
-      if (match.mode === 'level') drawCountdown(ctx, layout, ropeView);
+      // 普通对战和闯关模式都显示 3-2-1 开场。
+      if (match.phase === 'countdown') drawCountdown(ctx, layout, ropeView);
     },
 
     onTouchStart(x, y) {

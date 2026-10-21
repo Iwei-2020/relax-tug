@@ -28,7 +28,7 @@ const { createEventState, activeEvent, tick: tickEvent, maybeTrigger } = require
 const { clampLevel, levelConfig } = require('./levels.js');
 
 /**
- * 创建一局。普通对战立即开始；闯关保留开场倒计时。
+ * 创建一局。普通对战和闯关模式均从 3 秒开场倒计时开始。
  *
  * 两种模式（§4.8）：
  *   · `classic`（默认）：普通对战，按开局段位和已进行时长动态调整难度与能量变化，无整局时限；
@@ -51,7 +51,6 @@ function createMatch(options) {
       : DIFFICULTY[opts.difficulty]
         ? opts.difficulty
         : classicMode.paramsAt(rankId, 0).difficulty;
-  const startsImmediately = mode === 'classic';
   return {
     mode, // 'classic' 普通对战 | 'level' 闯关模式（§4.8）
     level, // 闯关关卡号（classic 为 null）
@@ -59,8 +58,8 @@ function createMatch(options) {
     difficulty,
     challenge: mode === 'classic' && opts.challenge === true, // 每日挑战局标记（§4.4 已下线，仅历史兼容）
     matchTimeoutMs: opts.matchTimeoutMs === undefined ? MATCH_TIMEOUT_MS : opts.matchTimeoutMs,
-    phase: startsImmediately ? 'playing' : 'countdown',
-    countdownLeftMs: startsImmediately ? 0 : COUNTDOWN_MS,
+    phase: 'countdown',
+    countdownLeftMs: COUNTDOWN_MS,
     elapsedMs: 0,
     roundIndex: 0,
     roundElapsedMs: 0,
