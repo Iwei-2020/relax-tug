@@ -1,7 +1,7 @@
 /**
  * 抖音云函数服务产物：reportEvents.js
  *
- * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/levels.js / server/lib/progression.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/functions/reportEvents/index.js
+ * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/levels.js / server/lib/lives.js / server/lib/progression.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/functions/reportEvents/index.js
  * 改完源后重跑 `node tools/gen-cloud-functions.js`（生成脚本：tools/gen-cloud-functions.js）。
  *
  * 平台契约：入口 `module.exports = async function (params, context)`，`params` 即 HTTP 请求体本身，
@@ -98,64 +98,36 @@ module.exports = {
   "EVENT_MAX_ENERGY_SCALE": 1.5,
   "EVENT_MAX_PER_MATCH": 2,
   "MONETIZATION": {
-    "revivePerMatch": 1,
-    "rewardDoublePerDay": 3,
-    "firstWinTriplePerDay": 1,
     "skinUnlockPerDay": 2
   },
   "PROGRESSION": {
-    "maxLevel": 60,
-    "levelBase": 100,
-    "levelStep": 100,
-    "reward": {
-      "expByResult": {
-        "win": 20,
-        "draw": 12,
-        "lose": 8
-      },
-      "coinsByResult": {
-        "win": 30,
-        "draw": 15,
-        "lose": 10
-      },
-      "expPerHit": 1,
-      "expPerPerfect": 2,
-      "coinsPerPerfect": 2,
-      "matchExpCap": 120,
-      "matchCoinCap": 120,
-      "dailyExpCap": 800,
-      "dailyCoinCap": 1000
-    },
+    "pointsPerWin": 10,
+    "pointsPerLoss": 10,
+    "pointsPerRank": 100,
     "ranks": [
       {
         "id": "bronze",
-        "name": "青铜",
-        "minLevel": 1
+        "name": "青铜"
       },
       {
         "id": "silver",
-        "name": "白银",
-        "minLevel": 6
+        "name": "白银"
       },
       {
         "id": "gold",
-        "name": "黄金",
-        "minLevel": 12
+        "name": "黄金"
       },
       {
         "id": "platinum",
-        "name": "铂金",
-        "minLevel": 20
+        "name": "铂金"
       },
       {
         "id": "diamond",
-        "name": "钻石",
-        "minLevel": 30
+        "name": "钻石"
       },
       {
         "id": "master",
-        "name": "王者",
-        "minLevel": 45
+        "name": "王者"
       }
     ]
   },
@@ -203,6 +175,7 @@ module.exports = {
   },
   "LEVEL_MAX": 100,
   "LEVEL_LIVES": 3,
+  "DAILY_LIVES": 5,
   "SEQ_LEN_MIN": 1,
   "SEQ_LEN_MAX": 6,
   "CANDIDATE_TIERS": [
@@ -598,135 +571,131 @@ module.exports = {
 };
   };
 
+  // ── server/lib/lives.js
+  __registry["server/lib/lives.js"] = function (module, exports, require) {
+'use strict';
+
+const { DAILY_LIVES } = __req('server/lib/constants.js');
+
+function dayKey(nowMs) {
+  return new Date(nowMs + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function normalizeLives(raw, nowMs) {
+  const day = dayKey(nowMs);
+  if (!raw || raw.day !== day) return { day, count: DAILY_LIVES };
+  const count = Number(raw.count);
+  return {
+    day,
+    count: Number.isFinite(count) ? Math.max(0, Math.min(DAILY_LIVES, Math.floor(count))) : DAILY_LIVES,
+  };
+}
+
+function consumeLife(raw, nowMs) {
+  const state = normalizeLives(raw, nowMs);
+  if (state.count <= 0) return { ok: false, state };
+  return { ok: true, state: { ...state, count: state.count - 1 } };
+}
+
+function grantLife(raw, nowMs) {
+  const state = normalizeLives(raw, nowMs);
+  if (state.count >= DAILY_LIVES) return { ok: false, state };
+  return { ok: true, state: { ...state, count: state.count + 1 } };
+}
+
+module.exports = { dayKey, normalizeLives, consumeLife, grantLife };
+  };
+
   // ── server/lib/progression.js
   __registry["server/lib/progression.js"] = function (module, exports, require) {
 'use strict';
 
-/**
- * 服务端局外成长（《项目说明书》§4.6 局外成长 + §6.6 数值）
- *
- * 与客户端 `minigame/src/core/progression.js` **同一套公式、同一份参数**
- * （参数来自 constants.PROGRESSION 镜像），由 `test/progression.test.js` 交叉校验两端等价。
- * 服务端相对客户端的唯一增量：**每日封顶**（§6.6 防刷）——按当日已产出量削减本局奖励。
- */
+/** 服务端段位胜点逻辑，与客户端 `minigame/src/core/progression.js` 使用相同配置。 */
 
 const { PROGRESSION } = __req('server/lib/constants.js');
 
-/** 升到第 level 级所需经验（§6.6：`levelBase + levelStep × (level − 1)`）。 */
-function expToNext(level, cfg) {
+function rankIndexOf(rankId, cfg) {
   const c = cfg || PROGRESSION;
-  return c.levelBase + c.levelStep * (Math.max(1, Math.floor(level || 1)) - 1);
+  const index = c.ranks.findIndex((rank) => rank.id === rankId);
+  return index < 0 ? 0 : index;
 }
 
-/** 由等级推导段位（取满足 `minLevel ≤ level` 的最后一段）。 */
-function rankFor(level, cfg) {
+function rankFor(rankId, cfg) {
   const c = cfg || PROGRESSION;
-  const lv = Math.max(1, Math.floor(level || 1));
-  const ranks = c.ranks;
-  let picked = ranks[0];
-  for (let i = 0; i < ranks.length; i += 1) {
-    if (lv >= ranks[i].minLevel) picked = ranks[i];
-  }
-  return picked;
+  return c.ranks[rankIndexOf(rankId, c)];
 }
 
-/** 由累计经验推导等级。 */
-function levelFromExp(exp, cfg) {
-  const c = cfg || PROGRESSION;
-  let level = 1;
-  let left = Math.max(0, Math.floor(exp || 0));
-  while (level < c.maxLevel) {
-    const need = expToNext(level, c);
-    if (left < need) break;
-    left -= need;
-    level += 1;
-  }
-  const isMax = level >= c.maxLevel;
-  return { level, expInLevel: left, expToNext: isMax ? 0 : expToNext(level, c), isMax };
-}
-
-/** 单局奖励（§6.6）：只由对局摘要推导 + 单局封顶。 */
 function awardFor(summary, cfg) {
   const c = cfg || PROGRESSION;
-  const r = c.reward;
   const s = summary || {};
-  const result = s.result === 'win' ? 'win' : s.result === 'draw' ? 'draw' : 'lose';
-  const hits = Math.max(0, Math.floor(s.hits || 0));
-  const perfects = Math.max(0, Math.floor(s.perfectHits || 0));
-
-  const exp = Math.min(r.matchExpCap, (r.expByResult[result] || 0) + hits * r.expPerHit + perfects * r.expPerPerfect);
-  const coins = Math.min(r.matchCoinCap, (r.coinsByResult[result] || 0) + perfects * r.coinsPerPerfect);
-  return { exp, coins };
+  if (s.mode === 'level') return { rankPoints: 0 };
+  if (s.result === 'win') return { rankPoints: c.pointsPerWin };
+  if (s.result === 'lose') return { rankPoints: -c.pointsPerLoss };
+  return { rankPoints: 0 };
 }
 
-/**
- * 单局奖励 + **每日封顶**（服务端权威，§6.6 防刷）。
- * @param {object} summary 对局摘要
- * @param {object} counter 当日计数器（含 `expEarned` / `coinsEarned` 已产出量）
- * @returns {{exp:number, coins:number}} 实际发放量（可能因当日额度耗尽而为 0）
- */
-function awardWithDailyCaps(summary, counter, cfg) {
+function applyRankPoints(rankId, rankPoints, delta, cfg) {
   const c = cfg || PROGRESSION;
-  const r = c.reward;
-  const base = awardFor(summary, c);
-  const usedExp = Math.max(0, Math.floor((counter && counter.expEarned) || 0));
-  const usedCoins = Math.max(0, Math.floor((counter && counter.coinsEarned) || 0));
-  const exp = Math.max(0, Math.min(base.exp, r.dailyExpCap - usedExp));
-  const coins = Math.max(0, Math.min(base.coins, r.dailyCoinCap - usedCoins));
-  return { exp, coins };
+  const ranks = c.ranks;
+  let rankIndex = rankIndexOf(rankId, c);
+  let points = Math.floor(Number(rankPoints) || 0) + Math.floor(Number(delta) || 0);
+  const threshold = c.pointsPerRank;
+
+  while (points >= threshold && rankIndex < ranks.length - 1) {
+    rankIndex += 1;
+    points -= threshold;
+  }
+  while (points < 0 && rankIndex > 0) {
+    rankIndex -= 1;
+    points += threshold;
+  }
+
+  if (rankIndex === 0) points = Math.max(0, points);
+  if (rankIndex === ranks.length - 1) points = Math.min(threshold, Math.max(0, points));
+  return { rankId: ranks[rankIndex].id, rankPoints: points };
 }
 
-/**
- * 把奖励并入档案（返回新档案）：累计经验 / 金币，重算等级与段位，累计场次与胜场。
- * @param {object} profile 原档案（可为 null）
- * @param {{exp:number, coins:number}} award
- * @param {'win'|'lose'|'draw'} result
- * @param {number} nowMs
- */
+/** 累计胜点和统计场次；经验及玩家等级不再参与成长。 */
 function applyAward(profile, award, result, nowMs, cfg) {
   const c = cfg || PROGRESSION;
   const p = profile || {};
-  const exp = Math.max(0, Math.floor(p.exp || 0) + Math.floor((award && award.exp) || 0));
-  const coins = Math.max(0, Math.floor(p.coins || 0) + Math.floor((award && award.coins) || 0));
-  const lv = levelFromExp(exp, c);
-  return {
+  const rank = applyRankPoints(p.rankId, p.rankPoints, award && award.rankPoints, c);
+  const updated = {
     ...p,
-    exp,
-    coins,
-    level: lv.level,
-    rankId: rankFor(lv.level, c).id,
+    ...rank,
     matches: Math.max(0, Math.floor(p.matches || 0)) + 1,
     wins: Math.max(0, Math.floor(p.wins || 0)) + (result === 'win' ? 1 : 0),
     updatedAt: nowMs,
   };
+  delete updated.coins;
+  delete updated.exp;
+  delete updated.level;
+  return updated;
 }
 
-/** 对外回执用的进度摘要。 */
-function progressOf(profile, cfg) {
+function normalizeProgress(raw, cfg) {
   const c = cfg || PROGRESSION;
-  const exp = Math.max(0, Math.floor((profile && profile.exp) || 0));
-  const lv = levelFromExp(exp, c);
-  const rank = rankFor(lv.level, c);
+  const p = raw && typeof raw === 'object' ? raw : {};
+  const rank = applyRankPoints(rankFor(p.rankId, c).id, p.rankPoints, 0, c);
   return {
-    exp,
-    coins: Math.max(0, Math.floor((profile && profile.coins) || 0)),
-    level: lv.level,
-    expInLevel: lv.expInLevel,
-    expToNext: lv.expToNext,
-    rankId: rank.id,
-    rankName: rank.name,
-    matches: Math.max(0, Math.floor((profile && profile.matches) || 0)),
-    wins: Math.max(0, Math.floor((profile && profile.wins) || 0)),
+    ...rank,
+    matches: Math.max(0, Math.floor(p.matches || 0)),
+    wins: Math.max(0, Math.floor(p.wins || 0)),
   };
 }
 
+function progressOf(profile, cfg) {
+  const c = cfg || PROGRESSION;
+  const p = normalizeProgress(profile, c);
+  return { ...p, rankName: rankFor(p.rankId, c).name };
+}
+
 module.exports = {
-  expToNext,
   rankFor,
-  levelFromExp,
+  applyRankPoints,
   awardFor,
-  awardWithDailyCaps,
   applyAward,
+  normalizeProgress,
   progressOf,
 };
   };
@@ -736,11 +705,11 @@ module.exports = {
 'use strict';
 
 /**
- * 对局结果校验与记账（《项目说明书》§2.3 胜负规则 + §5.1 广告频次 + §5.4 服务端只做校验）
+ * 对局结果校验与记账（《项目说明书》§2.3 胜负规则 + §4.6 段位胜点）
  *
  * 定位：**服务端权威校验**，用于
  *   1) 反作弊：按 core 的同口径公式重算位移与能量上限，拒绝篡改上报；
- *   2) 记账：累计胜场 / 每日首胜 / 广告频次（复活、翻倍、皮肤解锁）；
+ *   2) 记账：累计胜场与段位胜点；
  *   3) 供排行榜与埋点回收（§9.3 DoD：平均时长 / 命中率 / 胜负比）。
  *
  * 数值口径来自 server/lib/constants.js（由 tools/gen-constants.js 从小游戏 config 生成），
@@ -765,7 +734,7 @@ const {
 } = __req('server/lib/constants.js');
 const { CODES, ok, fail } = __req('server/lib/envelope.js');
 const { emptyCounter } = __req('server/lib/store.js');
-const { awardWithDailyCaps, applyAward, progressOf } = __req('server/lib/progression.js');
+const { awardFor, applyAward, progressOf } = __req('server/lib/progression.js');
 const levels = __req('server/lib/levels.js');
 
 /** 判定结果集合。 */
@@ -861,7 +830,7 @@ function validate(payload) {
     else if (p.eventsFired > EVENT_MAX_PER_MATCH) errors.push('eventsFired 超过每局上限');
   }
 
-  // §4.8 闯关模式：关卡号与剩余生命必填并落在合法区间；难度须与该关「入门档」一致
+  // §4.8 闯关模式：关卡号与剩余机会必填并落在合法区间；难度须与该关「入门档」一致
   // （客户端 summary.difficulty 取的就是 levelConfig(level, 0).tier，服务端按同一镜像重算）。
   if (isLevel) {
     if (!validLevel(p.level)) errors.push('level 非法');
@@ -871,7 +840,7 @@ function validate(payload) {
       p.durationMs !== GAME_HARD_LIMIT_MS &&
       !(p.result === 'lose' && p.livesLeft === 0)
     ) {
-      errors.push('闯关时长必须为 45 秒，生命耗尽失败除外');
+      errors.push('闯关时长必须为 45 秒，机会耗尽失败除外');
     }
     if (validLevel(p.level) && DIFFICULTY[p.difficulty] !== undefined) {
       if (p.difficulty !== levels.levelConfig(p.level, 0).tier) errors.push('difficulty 与关卡入门档不一致');
@@ -916,13 +885,13 @@ function validate(payload) {
     if (p.result === 'win') {
       if (p.energyPct !== LEVEL_MODE.energyMax) errors.push('能量未满却判胜');
       if (p.durationMs !== GAME_HARD_LIMIT_MS) errors.push('闯关胜利必须持续 45 秒');
-      if (p.livesLeft === 0) errors.push('生命耗尽却判胜');
+      if (p.livesLeft === 0) errors.push('机会耗尽却判胜');
     }
     if (p.result === 'lose') {
       if (p.energyPct === LEVEL_MODE.energyMax && p.livesLeft !== 0) errors.push('能量已满却判负');
-      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且生命未耗尽却判负');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且机会未耗尽却判负');
     }
-    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
+    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('机会耗尽却未判负');
   }
 
   return { ok: errors.length === 0, errors };
@@ -956,14 +925,12 @@ async function recordResult(store, openid, payload, nowMs) {
     nickname: '',
     wins: 0,
     matches: 0,
-    exp: 0,
-    coins: 0,
     createdAt: nowMs,
   };
   const prevCounter = (await store.countersOf(openid, day)) || emptyCounter();
 
-  // §4.6 局外成长：奖励由对局摘要推导（客户端不可上报奖励数字），服务端另做单局 + 每日封顶（§6.6）
-  const award = awardWithDailyCaps(payload, prevCounter);
+  // §4.6 段位胜点只由胜负推导，客户端不可上报胜点变化。
+  const award = awardFor(payload);
   let profile = applyAward(prevProfile, award, payload.result, nowMs);
 
   // §4.8 闯关进度：只在**过关**时推进 `levels.max`（服务端权威；客户端本地乐观 + 回执覆盖）
@@ -972,16 +939,17 @@ async function recordResult(store, openid, payload, nowMs) {
   }
   const levelsProgress = levels.normalizeLevels(profile.levels);
 
-  const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
     match: prevCounter.match + 1,
     win: prevCounter.win + (isWin ? 1 : 0),
-    firstWinUsed: prevCounter.firstWinUsed || isWin,
     lastMatchAt: nowMs,
-    expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
-    coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
   };
+  delete counter.expEarned;
+  delete counter.coinsEarned;
+  delete counter.firstWinUsed;
+  delete counter.rewardDouble;
+  delete counter.coins;
   delete counter.taskProgress;
   delete counter.taskClaimed;
   delete counter.chestClaimed;
@@ -1013,23 +981,19 @@ async function recordResult(store, openid, payload, nowMs) {
           netEnergy: payload.netEnergy,
           displacementPx: payload.displacementPx,
         }),
-    awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
-    awardCoins: award.coins,
+    awardRankPoints: award.rankPoints,
     createdAt: nowMs,
   });
 
   return ok({
     wins: profile.wins,
     matches: profile.matches,
-    firstWinToday,
-    rewardMultiplier: firstWinToday ? 3 : 1, // 每日首胜三倍（§5.1）
     award, // 本局实发奖励（§4.6）
     progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
     levels: levelsProgress, // 权威闯关进度 `{ max }`（客户端本地乐观 + 此值覆盖，§4.8）
     daily: {
       match: counter.match,
       win: counter.win,
-      rewardDoubleLeft: Math.max(0, MONETIZATION.rewardDoublePerDay - counter.rewardDouble),
       skinUnlockLeft: Math.max(0, MONETIZATION.skinUnlockPerDay - counter.skinUnlock),
     },
   });
@@ -1208,13 +1172,8 @@ function emptyCounter() {
   return {
     match: 0, // 当日对局数
     win: 0, // 当日胜场
-    firstWinUsed: false, // 当日首胜三倍是否已发放
-    rewardDouble: 0, // 当日结算翻倍已用次数
     skinUnlock: 0, // 当日皮肤解锁已用次数
     lastMatchAt: 0,
-    // ── §4.6 / §6.6 局外成长：当日「对局产出」累计量，用于每日封顶（防刷） ──
-    expEarned: 0,
-    coinsEarned: 0,
   };
 }
 

@@ -31,7 +31,7 @@ const EVENTS = {
   ROUND_TIMEOUT: 'round_timeout',
   MATCH_END: 'match_end', // 含 result / durationMs / accuracy
   RANDOM_EVENT: 'random_event', // 随机事件触发（§6.5：id / 轮次）
-  REVIVE_CLICK: 'revive_click',
+  LIFE_AD_CLICK: 'life_ad_click',
   AD_WATCH: 'ad_watch',
   AD_FAIL: 'ad_fail',
   AD_FALLBACK: 'ad_fallback',
@@ -39,7 +39,7 @@ const EVENTS = {
   SHARE_SUCCESS: 'share_success',
   SHARE_FAIL: 'share_fail',
   SHARE_CARD_SHOWN: 'share_card_shown', // 分享卡预览页展示（§4.5）
-  MATCH_SETTLED: 'match_settled', // 局外成长落账（§4.6：exp / coins / result）
+  MATCH_SETTLED: 'match_settled', // 段位胜点结算（§4.6：rankPoints / result）
   LEVEL_PICK: 'level_pick', // 选关（§4.8：level / via，via=ad 表示需要看广告的跳关）
   LEVEL_START: 'level_start', // 进入某关（§4.8：level）
   LEVEL_CLEARED: 'level_cleared', // 过关（§4.8：level / livesLeft）

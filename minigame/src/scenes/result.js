@@ -9,13 +9,12 @@
  * 风格：马卡龙（与首页、对局页统一）—— 天空 + 同款氛围装饰打底，磨砂玻璃数据面板，
  * 主 CTA 与次按钮直接复用 components/decor.js 的 `drawCtaButton / drawPillButton`。
  *
- * 广告规范（§5.1，硬性）：失败时「看广告复活」与「再来一局」**只呈现单一主 CTA**，
- * 避免误触 —— 故失败页主 CTA 为「看广告复活」，次 CTA 才是「再来一局」；
- * 胜利/平局页主 CTA 为「再来一局」，分享为次级。
+ * 普通对战结算：提供「再来一局」与「返回首页」；
+ * 体力耗尽时，重开回调负责请求体力补充广告。
  *
- * 闯关模式分支（§4.8）：**不提供复活**（复活中途补命会破坏「3 条生命」口径）——
+ * 闯关模式分支（§4.8）：不消耗每日体力，关内仍按 3 次机会判定失败——
  * 过关主 CTA 为「下一关」（末关为「已通关全部」，点击回首页），失败主 CTA 为「重试本关」，
- * 次 CTA 恒为「返回选关」，数据面板额外呈现「关卡 / 剩余生命」。
+ * 次 CTA 恒为「返回选关」，数据面板额外呈现「关卡 / 剩余机会」。
  *
  * 结算情绪设计（§4.3）：失败页给"差一点"的措辞，最大化重开率。
  */
@@ -26,8 +25,7 @@ const { roundRect } = require('../components/shape.js');
 const { HIT_ENERGY, COMBO_BONUS_MAX, LEVEL_LIVES, LEVEL_MAX } = require('../config/config.js');
 const { createRng } = require('../core/rng.js');
 const { findEvent } = require('../core/events.js');
-const { AD_UNITS, showRewardedVideo } = require('../platform/ad.js');
-const { EVENTS, track } = require('../utils/tracker.js');
+const { track } = require('../utils/tracker.js');
 
 /** 结果动画时长（§4.3「撒花 / 破碎」）：到期后粒子自然隐去，不再绘制。 */
 const BURST_MS = 1600;
@@ -85,7 +83,10 @@ function computeResultLayout(layout, rowCount) {
   const secW = Math.round(W * 0.62);
   const secondary = { x: Math.round(cx - secW / 2), y: main.y + mainH + Math.round(H * 0.025), w: secW, h: secH };
 
-  const home = { x: Math.round(cx - 70), y: Math.round(H * 0.89), w: 140, h: 48 };
+  const homeW = Math.round(W * 0.62);
+  const homeH = Math.round(H * 0.068);
+  const homeY = rows > 6 ? Math.round(H * 0.89) : Math.round(H * 0.82);
+  const home = { x: Math.round(cx - homeW / 2), y: homeY, w: homeW, h: homeH };
 
   return {
     W,
@@ -127,6 +128,27 @@ function touchRect(rect) {
   const w = Math.max(rect.w, 88);
   const h = Math.max(rect.h, 88);
   return { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w, h };
+}
+
+function targetAt(x, y, layout, hitMain, hitSecondary, hitHome) {
+  const targets = [
+    { id: 'main', hitRect: hitMain, rect: layout.main },
+    { id: 'home', hitRect: hitHome, rect: layout.home },
+  ];
+  if (hitSecondary) targets.splice(1, 0, { id: 'secondary', hitRect: hitSecondary, rect: layout.secondary });
+  let picked = null;
+  let closestDistance = Infinity;
+  for (const target of targets) {
+    if (!hit(target.hitRect, x, y)) continue;
+    const dx = x - (target.rect.x + target.rect.w / 2);
+    const dy = y - (target.rect.y + target.rect.h / 2);
+    const distance = dx * dx + dy * dy;
+    if (distance < closestDistance) {
+      picked = target.id;
+      closestDistance = distance;
+    }
+  }
+  return picked;
 }
 
 /**
@@ -188,23 +210,21 @@ function makeShardBurst(rng, L) {
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {object} options.summary 见 core/battle.summary
- * @param {() => void} options.onReplay 再来一局（普通对战）
- * @param {() => void} options.onRevive 复活续战（仅在普通对战的失败页可用；由 boot 注入续战快照）
+ * @param {(setHint:(message:string)=>void) => void} options.onReplay 再来一局（普通对战）
  * @param {() => void} [options.onLevelNext] 闯关过关 → 下一关（§4.8）
  * @param {() => void} [options.onLevelRetry] 闯关失败 → 重试本关（§4.8）
  * @param {() => void} [options.onLevels] 闯关 → 返回选关页（§4.8）
  * @param {() => void} options.onHome 返回首页
- * @param {() => void} [options.onShare] 分享战绩
  */
 function createResultScene(options) {
   const opts = options || {};
   const layout = opts.layout;
   const summary = opts.summary || {};
-  const isLevel = summary.mode === 'level'; // §4.8 闯关模式：无复活，主 CTA 换成「下一关 / 重试本关」
+  const isLevel = summary.mode === 'level'; // §4.8 闯关模式：主 CTA 为「下一关 / 重试本关」
   const L = computeResultLayout(layout, isLevel ? 8 : 6);
   const cache = {};
   const hitMain = touchRect(L.main);
-  const hitSecondary = touchRect(L.secondary);
+  const hitSecondary = isLevel ? touchRect(L.secondary) : null;
   const hitHome = touchRect(L.home);
 
   const isLose = summary.result === 'lose';
@@ -244,12 +264,12 @@ function createResultScene(options) {
       ? `随机事件 ×${summary.eventsFired} · ${eventNames.join(' / ')}`
       : '';
 
-  // 数据面板行（§4.3；闯关模式额外呈现「关卡 / 剩余生命」）。
+  // 数据面板行（§4.3；闯关模式额外呈现「关卡 / 剩余机会」）。
   // 在场景创建时算一次，避免帧内新建数组 / 字符串（§5.4）。
   const dataRows = isLevel
     ? [
         ['关卡', `第 ${summary.level || 1} 关`],
-        ['剩余生命', `${summary.livesLeft || 0} / ${LEVEL_LIVES}`],
+        ['剩余机会', `${summary.livesLeft || 0} / ${LEVEL_LIVES}`],
         ['命中次数', String(summary.hits || 0)],
         ['完美判定', String(summary.perfectHits || 0)],
         ['最高连击', String(summary.bestCombo || 0)],
@@ -266,7 +286,6 @@ function createResultScene(options) {
         ['净能量差', String(summary.netEnergy || 0)],
       ];
 
-  let reviveUsed = false;
   let pressed = null;
   let hintText = '';
   let tMs = 0;
@@ -283,25 +302,7 @@ function createResultScene(options) {
 
   function replay() {
     track('replay_click', { result: summary.result });
-    if (typeof opts.onReplay === 'function') opts.onReplay();
-  }
-
-  function revive() {
-    if (reviveUsed) return;
-    reviveUsed = true; // §5.1 复活每局限 1 次
-    track(EVENTS.REVIVE_CLICK, { result: summary.result });
-    showRewardedVideo({
-      unitId: AD_UNITS.revive,
-      scene: 'revive',
-      onSuccess(detail) {
-        if (detail && detail.fallback) track(EVENTS.AD_FALLBACK, { scene: 'revive' });
-        if (typeof opts.onRevive === 'function') opts.onRevive();
-        else replay();
-      },
-      onFail() {
-        hintText = '广告暂时不可用，稍后再试或直接再来一局';
-      },
-    });
+    if (typeof opts.onReplay === 'function') opts.onReplay((message) => { hintText = message || ''; });
   }
 
   return {
@@ -400,20 +401,14 @@ function createResultScene(options) {
         }
       }
 
-      // 主 CTA：
-      //   普通对战失败页 = 「看广告复活」（单一主 CTA，§5.1），其余 = 「再来一局」；
-      //   闯关模式（§4.8）= 过关 →「下一关」（末关「已通关全部」），失败 →「重试本关」，均无复活。
+      // 普通对战统一重开；闯关模式按关卡结果继续或重试。
       const mainLabel = isLevel
         ? isWin
           ? isFinalLevel
             ? '已通关全部'
             : '下一关'
           : '重试本关'
-        : isLose
-          ? reviveUsed
-            ? '已使用复活'
-            : '看广告复活'
-          : '再来一局';
+        : '再来一局';
       decor.drawCtaButton(ctx, L.main, {
         label: mainLabel,
         font: `bold ${L.ctaFont}px sans-serif`,
@@ -421,28 +416,32 @@ function createResultScene(options) {
         cache,
       });
 
-      // 次 CTA：普通对战失败页为「再来一局」（避免与「看广告复活」抢焦点）；
-      // 闯关模式为「返回选关」（§4.8 主 CTA 已是「下一关 / 重试本关」，选关入口放次级）；其余为「分享战绩」
-      const secondaryLabel = isLevel ? '返回选关' : isLose ? '再来一局' : '分享战绩';
-      decor.drawPillButton(ctx, L.secondary, {
-        label: secondaryLabel,
-        font: `bold ${L.pillFont}px sans-serif`,
-        border: !isLevel && isLose ? HOME.violet : HOME.mint,
-        glow: !isLevel && isLose ? HOME.violetGlow : HOME.mintGlow,
-        fill: !isLevel && isLose ? HOME.violetFill : HOME.mintFill,
-        pressed: pressed === 'secondary',
-      });
+      if (isLevel) {
+        decor.drawPillButton(ctx, L.secondary, {
+          label: '返回选关',
+          font: `bold ${L.pillFont}px sans-serif`,
+          border: HOME.mint,
+          glow: HOME.mintGlow,
+          fill: HOME.mintFill,
+          pressed: pressed === 'secondary',
+        });
+      }
 
-      // 返回首页
-      decor.drawOutlinedText(ctx, '返回首页', L.cx, L.home.y + L.home.h / 2, {
-        font: `bold ${Math.round(L.rowFont * 0.95)}px sans-serif`,
-        fill: MACARON.ink,
-        glow: 'rgba(255,255,255,0.85)',
-        glowBlur: 6,
+      // 返回首页：复用首页 CTA 视觉语言。
+      decor.drawCtaButton(ctx, L.home, {
+        label: '返回首页',
+        font: `bold ${L.pillFont}px sans-serif`,
+        ring: false,
+        gradient: HOME.challengeCta,
+        pressed: pressed === 'home',
+        cache,
       });
 
       if (hintText) {
-        decor.drawOutlinedText(ctx, hintText, L.cx, L.secondary.y + L.secondary.h + Math.round(L.H * 0.028), {
+        const hintY = isLevel
+          ? L.secondary.y + L.secondary.h + Math.round(L.H * 0.028)
+          : L.main.y + L.main.h + Math.round(L.H * 0.024);
+        decor.drawOutlinedText(ctx, hintText, L.cx, hintY, {
           font: 'bold 15px sans-serif',
           fill: MACARON.warn,
           outline: '#FFFFFF',
@@ -463,36 +462,30 @@ function createResultScene(options) {
     },
 
     onTouchStart(x, y) {
-      if (hit(hitMain, x, y)) pressed = 'main';
-      else if (hit(hitSecondary, x, y)) pressed = 'secondary';
+      const target = targetAt(x, y, L, hitMain, hitSecondary, hitHome);
+      pressed = target === 'main' || target === 'secondary' || target === 'home' ? target : null;
     },
 
     onTouchEnd(x, y) {
-      const wantMain = hit(hitMain, x, y);
-      const wantSecondary = hit(hitSecondary, x, y);
-      const wantHome = hit(hitHome, x, y);
+      const target = targetAt(x, y, L, hitMain, hitSecondary, hitHome);
       pressed = null;
 
-      if (wantMain) {
+      if (target === 'main') {
         if (isLevel) {
-          // §4.8 闯关模式：过关进下一关（末关回首页），失败重试本关；不提供复活
+          // §4.8 闯关模式：过关进下一关（末关回首页），失败重试本关
           if (isWin) {
             if (isFinalLevel) {
               if (typeof opts.onHome === 'function') opts.onHome();
             } else if (typeof opts.onLevelNext === 'function') opts.onLevelNext();
           } else if (typeof opts.onLevelRetry === 'function') opts.onLevelRetry();
-        } else if (isLose) revive();
-        else replay();
+        } else replay();
         return;
       }
-      if (wantSecondary) {
-        if (isLevel) {
-          if (typeof opts.onLevels === 'function') opts.onLevels();
-        } else if (isLose) replay();
-        else if (typeof opts.onShare === 'function') opts.onShare();
+      if (target === 'secondary') {
+        if (typeof opts.onLevels === 'function') opts.onLevels();
         return;
       }
-      if (wantHome && typeof opts.onHome === 'function') opts.onHome();
+      if (target === 'home' && typeof opts.onHome === 'function') opts.onHome();
     },
   };
 }

@@ -132,6 +132,16 @@ function fetchPlayerState() {
   return callFunction('playerState', {});
 }
 
+/** 消耗一条每日体力（普通对战与好友挑战开局）。 */
+function consumeLife() {
+  return callFunction('playerState', { action: 'consumeLife' });
+}
+
+/** 完整观看体力补充广告后领取一条体力。 */
+function rewardLife() {
+  return callFunction('playerState', { action: 'rewardLife' });
+}
+
 module.exports = {
   CLOUD,
   normalize,
@@ -141,4 +151,6 @@ module.exports = {
   reportResult,
   reportEvents,
   fetchPlayerState,
+  consumeLife,
+  rewardLife,
 };

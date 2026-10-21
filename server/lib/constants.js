@@ -69,64 +69,36 @@ module.exports = {
   "EVENT_MAX_ENERGY_SCALE": 1.5,
   "EVENT_MAX_PER_MATCH": 2,
   "MONETIZATION": {
-    "revivePerMatch": 1,
-    "rewardDoublePerDay": 3,
-    "firstWinTriplePerDay": 1,
     "skinUnlockPerDay": 2
   },
   "PROGRESSION": {
-    "maxLevel": 60,
-    "levelBase": 100,
-    "levelStep": 100,
-    "reward": {
-      "expByResult": {
-        "win": 20,
-        "draw": 12,
-        "lose": 8
-      },
-      "coinsByResult": {
-        "win": 30,
-        "draw": 15,
-        "lose": 10
-      },
-      "expPerHit": 1,
-      "expPerPerfect": 2,
-      "coinsPerPerfect": 2,
-      "matchExpCap": 120,
-      "matchCoinCap": 120,
-      "dailyExpCap": 800,
-      "dailyCoinCap": 1000
-    },
+    "pointsPerWin": 10,
+    "pointsPerLoss": 10,
+    "pointsPerRank": 100,
     "ranks": [
       {
         "id": "bronze",
-        "name": "青铜",
-        "minLevel": 1
+        "name": "青铜"
       },
       {
         "id": "silver",
-        "name": "白银",
-        "minLevel": 6
+        "name": "白银"
       },
       {
         "id": "gold",
-        "name": "黄金",
-        "minLevel": 12
+        "name": "黄金"
       },
       {
         "id": "platinum",
-        "name": "铂金",
-        "minLevel": 20
+        "name": "铂金"
       },
       {
         "id": "diamond",
-        "name": "钻石",
-        "minLevel": 30
+        "name": "钻石"
       },
       {
         "id": "master",
-        "name": "王者",
-        "minLevel": 45
+        "name": "王者"
       }
     ]
   },
@@ -174,6 +146,7 @@ module.exports = {
   },
   "LEVEL_MAX": 100,
   "LEVEL_LIVES": 3,
+  "DAILY_LIVES": 5,
   "SEQ_LEN_MIN": 1,
   "SEQ_LEN_MAX": 6,
   "CANDIDATE_TIERS": [

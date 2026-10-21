@@ -20,6 +20,8 @@ test('首页按钮区上移并与资料卡相交，闯关入口提前且 CTA 单
     assert.ok(layout.titleY < viewport.height * 0.213);
     assert.ok(layout.subY < viewport.height * 0.271);
     assert.ok(layout.card.y < viewport.height * 0.332);
+    assert.equal(layout.card.w, Math.round(viewport.width * 0.836), '资料卡宽度恢复原布局');
+    assert.equal(layout.card.h, Math.round(viewport.height * 0.205), '资料卡高度恢复原布局');
     const cardBottom = layout.card.y + layout.card.h;
     assert.ok(Math.abs(layout.main.y + layout.main.h / 2 - cardBottom) <= 1, '开始对战中心与资料卡底部对齐');
     assert.ok(layout.main.y < cardBottom && layout.main.y + layout.main.h > cardBottom, '开始对战与资料卡底部重叠');

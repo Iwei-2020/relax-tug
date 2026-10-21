@@ -92,38 +92,22 @@ const CONFIG = {
 
   /* ── §5.1 激励广告频次上限（服务端记账校验，客户端只做入口控制） ── */
   monetization: {
-    revivePerMatch: 1, // 失败复活：每局 1 次
-    rewardDoublePerDay: 3, // 结算奖励翻倍：每日 3 次
-    firstWinTriplePerDay: 1, // 每日首胜三倍：每日 1 次
     skinUnlockPerDay: 2, // 皮肤解锁：每日 2 次
   },
 
-  /* ── §4.6 / §6.6 局外成长（等级 / 经验 / 金币 / 段位） ───────────── */
-  // 奖励一律**由对局摘要推导**（结果 + 命中段数 + 完美段数）：客户端与服务端各自用
-  // 这份参数重算（服务端另做单局 / 每日封顶，见 §6.6），**不接受**客户端自行上报奖励数字。
+  /* ── §4.6 段位胜点 ───────────────────────────────────────────── */
   progression: {
-    maxLevel: 60,
-    levelBase: 100, // 升到第 2 级所需经验
-    levelStep: 100, // 每升一级所需经验的递增量（等差曲线）
-    reward: {
-      expByResult: { win: 20, draw: 12, lose: 8 }, // 结果基础经验
-      coinsByResult: { win: 30, draw: 15, lose: 10 }, // 结果基础金币
-      expPerHit: 1, // 每命中一段
-      expPerPerfect: 2, // 每完美判定一段
-      coinsPerPerfect: 2, // 每完美判定一段
-      matchExpCap: 120, // 单局经验封顶（防刷）：重标定后单局 ≈36 命中 / 27 完美 ≈ 110 经验，故由 90 上调
-      matchCoinCap: 120, // 单局金币封顶（防刷）
-      dailyExpCap: 800, // 每日经验封顶（防刷）
-      dailyCoinCap: 1000, // 每日金币封顶（防刷）
-    },
-    // 段位：由等级分段推导（取满足 minLevel ≤ level 的最后一段），只升不降
+    pointsPerWin: 10,
+    pointsPerLoss: 10,
+    pointsPerRank: 100,
+    // 段位按顺序晋级；青铜最低 0 点，王者最高 100 点。
     ranks: [
-      { id: 'bronze', name: '青铜', minLevel: 1 },
-      { id: 'silver', name: '白银', minLevel: 6 },
-      { id: 'gold', name: '黄金', minLevel: 12 },
-      { id: 'platinum', name: '铂金', minLevel: 20 },
-      { id: 'diamond', name: '钻石', minLevel: 30 },
-      { id: 'master', name: '王者', minLevel: 45 },
+      { id: 'bronze', name: '青铜' },
+      { id: 'silver', name: '白银' },
+      { id: 'gold', name: '黄金' },
+      { id: 'platinum', name: '铂金' },
+      { id: 'diamond', name: '钻石' },
+      { id: 'master', name: '王者' },
     ],
   },
 
@@ -186,7 +170,7 @@ const EVENT_MAX_PER_MATCH = CONFIG.events.maxPerMatch;
 /** 调色板色数（§3.2 / §3.3）：候选档位的物理上限（9 色 → 最多 9 格）。 */
 const PALETTE_MAX = CONFIG.palette.length;
 
-/** 闯关模式：关卡上限 / 生命值 / 段数区间 / 候选档位（§4.8 / §6.7）。 */
+/** 闯关模式：关卡上限 / 机会次数 / 段数区间 / 候选档位（§4.8 / §6.7）。 */
 const LEVEL_MAX = CONFIG.levelMode.maxLevel;
 const LEVEL_LIVES = CONFIG.levelMode.lives;
 const LEVEL_ENERGY_MAX = CONFIG.levelMode.energyMax;
@@ -194,6 +178,7 @@ const LEVEL_ENERGY_SCALE = CONFIG.levelMode.energyScale;
 const SEQ_LEN_MIN = CONFIG.levelMode.seqLen.min;
 const SEQ_LEN_MAX = CONFIG.levelMode.seqLen.max;
 const CANDIDATE_TIERS = CONFIG.levelMode.candidateTiers;
+const DAILY_LIVES = 5;
 
 module.exports = {
   CONFIG,
@@ -232,6 +217,7 @@ module.exports = {
   LEVEL_MODE: CONFIG.levelMode,
   LEVEL_MAX,
   LEVEL_LIVES,
+  DAILY_LIVES,
   LEVEL_ENERGY_MAX,
   LEVEL_ENERGY_SCALE,
   SEQ_LEN_MIN,

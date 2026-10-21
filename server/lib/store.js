@@ -20,13 +20,8 @@ function emptyCounter() {
   return {
     match: 0, // 当日对局数
     win: 0, // 当日胜场
-    firstWinUsed: false, // 当日首胜三倍是否已发放
-    rewardDouble: 0, // 当日结算翻倍已用次数
     skinUnlock: 0, // 当日皮肤解锁已用次数
     lastMatchAt: 0,
-    // ── §4.6 / §6.6 局外成长：当日「对局产出」累计量，用于每日封顶（防刷） ──
-    expEarned: 0,
-    coinsEarned: 0,
   };
 }
 

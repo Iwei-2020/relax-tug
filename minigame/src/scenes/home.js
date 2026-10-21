@@ -96,7 +96,7 @@ function titleGradient(ctx, L, cache) {
  * @param {() => void} options.onStart 点击「开始对战」
  * @param {() => void} [options.onChallenge] 点击「挑战好友」
  * @param {() => void} [options.onLevels] 点击「闯关挑战」（§4.8 进入关卡选择页）
- * @param {{nickname?:string, wins?:number, level?:number, rankName?:string, coins?:number}} [options.profile]
+ * @param {{nickname?:string, wins?:number, rankName?:string, rankPoints?:number, lives?:number}} [options.profile]
  *   我方资料（本地存档 + 服务端对账后填充）
  */
 function createHomeScene(options) {
@@ -178,11 +178,12 @@ function createHomeScene(options) {
       ctx.fillStyle = '#FFFFFF';
       ctx.font = `bold ${L.nameFont}px sans-serif`;
       ctx.fillText(profile.nickname || '我', pCx, card.y + card.h * 0.3);
-      // §4.6 局外成长：段位 · 等级 · 胜场 · 金币
+      // 段位胜点、总胜场与每日体力
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.font = `${L.winsFont}px sans-serif`;
+      const stamina = profile.lives === undefined ? 5 : profile.lives;
       ctx.fillText(
-        `${profile.rankName || '青铜'} Lv.${profile.level || 1} · 胜场 ${profile.wins || 0} · 金币 ${profile.coins || 0}`,
+        `${profile.rankName || '青铜'} ${profile.rankPoints || 0} · 胜场 ${profile.wins || 0} · 体力 ${stamina}/5`,
         pCx,
         card.y + card.h * 0.62
       );

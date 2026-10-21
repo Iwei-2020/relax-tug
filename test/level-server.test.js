@@ -156,7 +156,7 @@ test('validate：拒绝超过「关卡 + 轮次」派生的段数上界', () => 
 });
 
 test('validate：闯关收官接受 45 秒结果或生命耗尽的提前失败', () => {
-  assert.match(validate(levelPayload(30, { livesLeft: 0, result: 'win' })).errors.join(), /生命耗尽却判胜/);
+  assert.match(validate(levelPayload(30, { livesLeft: 0, result: 'win' })).errors.join(), /机会耗尽却判胜/);
   assert.match(validate(levelPayload(30, { result: 'win', energyPct: 99 })).errors.join(), /能量未满却判胜/);
   assert.match(validate(levelPayload(30, { result: 'lose', energyPct: 100 })).errors.join(), /能量已满却判负/);
   assert.match(validate(levelPayload(30, { result: 'draw' })).errors.join(), /闯关模式不支持平局/);

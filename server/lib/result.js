@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * 对局结果校验与记账（《项目说明书》§2.3 胜负规则 + §5.1 广告频次 + §5.4 服务端只做校验）
+ * 对局结果校验与记账（《项目说明书》§2.3 胜负规则 + §4.6 段位胜点）
  *
  * 定位：**服务端权威校验**，用于
  *   1) 反作弊：按 core 的同口径公式重算位移与能量上限，拒绝篡改上报；
- *   2) 记账：累计胜场 / 每日首胜 / 广告频次（复活、翻倍、皮肤解锁）；
+ *   2) 记账：累计胜场与段位胜点；
  *   3) 供排行榜与埋点回收（§9.3 DoD：平均时长 / 命中率 / 胜负比）。
  *
  * 数值口径来自 server/lib/constants.js（由 tools/gen-constants.js 从小游戏 config 生成），
@@ -30,7 +30,7 @@ const {
 } = require('./constants.js');
 const { CODES, ok, fail } = require('./envelope.js');
 const { emptyCounter } = require('./store.js');
-const { awardWithDailyCaps, applyAward, progressOf } = require('./progression.js');
+const { awardFor, applyAward, progressOf } = require('./progression.js');
 const levels = require('./levels.js');
 
 /** 判定结果集合。 */
@@ -126,7 +126,7 @@ function validate(payload) {
     else if (p.eventsFired > EVENT_MAX_PER_MATCH) errors.push('eventsFired 超过每局上限');
   }
 
-  // §4.8 闯关模式：关卡号与剩余生命必填并落在合法区间；难度须与该关「入门档」一致
+  // §4.8 闯关模式：关卡号与剩余机会必填并落在合法区间；难度须与该关「入门档」一致
   // （客户端 summary.difficulty 取的就是 levelConfig(level, 0).tier，服务端按同一镜像重算）。
   if (isLevel) {
     if (!validLevel(p.level)) errors.push('level 非法');
@@ -136,7 +136,7 @@ function validate(payload) {
       p.durationMs !== GAME_HARD_LIMIT_MS &&
       !(p.result === 'lose' && p.livesLeft === 0)
     ) {
-      errors.push('闯关时长必须为 45 秒，生命耗尽失败除外');
+      errors.push('闯关时长必须为 45 秒，机会耗尽失败除外');
     }
     if (validLevel(p.level) && DIFFICULTY[p.difficulty] !== undefined) {
       if (p.difficulty !== levels.levelConfig(p.level, 0).tier) errors.push('difficulty 与关卡入门档不一致');
@@ -181,13 +181,13 @@ function validate(payload) {
     if (p.result === 'win') {
       if (p.energyPct !== LEVEL_MODE.energyMax) errors.push('能量未满却判胜');
       if (p.durationMs !== GAME_HARD_LIMIT_MS) errors.push('闯关胜利必须持续 45 秒');
-      if (p.livesLeft === 0) errors.push('生命耗尽却判胜');
+      if (p.livesLeft === 0) errors.push('机会耗尽却判胜');
     }
     if (p.result === 'lose') {
       if (p.energyPct === LEVEL_MODE.energyMax && p.livesLeft !== 0) errors.push('能量已满却判负');
-      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且生命未耗尽却判负');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且机会未耗尽却判负');
     }
-    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
+    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('机会耗尽却未判负');
   }
 
   return { ok: errors.length === 0, errors };
@@ -221,14 +221,12 @@ async function recordResult(store, openid, payload, nowMs) {
     nickname: '',
     wins: 0,
     matches: 0,
-    exp: 0,
-    coins: 0,
     createdAt: nowMs,
   };
   const prevCounter = (await store.countersOf(openid, day)) || emptyCounter();
 
-  // §4.6 局外成长：奖励由对局摘要推导（客户端不可上报奖励数字），服务端另做单局 + 每日封顶（§6.6）
-  const award = awardWithDailyCaps(payload, prevCounter);
+  // §4.6 段位胜点只由胜负推导，客户端不可上报胜点变化。
+  const award = awardFor(payload);
   let profile = applyAward(prevProfile, award, payload.result, nowMs);
 
   // §4.8 闯关进度：只在**过关**时推进 `levels.max`（服务端权威；客户端本地乐观 + 回执覆盖）
@@ -237,16 +235,17 @@ async function recordResult(store, openid, payload, nowMs) {
   }
   const levelsProgress = levels.normalizeLevels(profile.levels);
 
-  const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
     match: prevCounter.match + 1,
     win: prevCounter.win + (isWin ? 1 : 0),
-    firstWinUsed: prevCounter.firstWinUsed || isWin,
     lastMatchAt: nowMs,
-    expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
-    coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
   };
+  delete counter.expEarned;
+  delete counter.coinsEarned;
+  delete counter.firstWinUsed;
+  delete counter.rewardDouble;
+  delete counter.coins;
   delete counter.taskProgress;
   delete counter.taskClaimed;
   delete counter.chestClaimed;
@@ -278,23 +277,19 @@ async function recordResult(store, openid, payload, nowMs) {
           netEnergy: payload.netEnergy,
           displacementPx: payload.displacementPx,
         }),
-    awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
-    awardCoins: award.coins,
+    awardRankPoints: award.rankPoints,
     createdAt: nowMs,
   });
 
   return ok({
     wins: profile.wins,
     matches: profile.matches,
-    firstWinToday,
-    rewardMultiplier: firstWinToday ? 3 : 1, // 每日首胜三倍（§5.1）
     award, // 本局实发奖励（§4.6）
     progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
     levels: levelsProgress, // 权威闯关进度 `{ max }`（客户端本地乐观 + 此值覆盖，§4.8）
     daily: {
       match: counter.match,
       win: counter.win,
-      rewardDoubleLeft: Math.max(0, MONETIZATION.rewardDoublePerDay - counter.rewardDouble),
       skinUnlockLeft: Math.max(0, MONETIZATION.skinUnlockPerDay - counter.skinUnlock),
     },
   });
