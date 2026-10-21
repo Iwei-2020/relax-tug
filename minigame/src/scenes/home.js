@@ -185,7 +185,7 @@ function createHomeScene(options) {
       ctx.fillText(
         `${profile.rankName || '青铜'} ${profile.rankPoints || 0} · 胜场 ${profile.wins || 0} · 体力 ${stamina}/5`,
         pCx,
-        card.y + card.h * 0.62
+        card.y + card.h * 0.58
       );
       ctx.restore();
 
