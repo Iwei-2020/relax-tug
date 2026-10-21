@@ -16,11 +16,12 @@ const {
   HIT_ENERGY,
   COMBO_BONUS_MAX,
   PERFECT_MULTIPLIER,
-  SEQUENCE_LENGTH,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
   GAME_HARD_LIMIT_MS,
+  CLASSIC_MODE,
   DIFFICULTY,
+  PROGRESSION,
   EVENT_MAX_ENERGY_SCALE,
   EVENT_MAX_PER_MATCH,
   LEVEL_MAX,
@@ -37,8 +38,6 @@ const levels = require('./levels.js');
 const RESULTS = ['win', 'lose', 'draw'];
 /** 对局模式集合（§4.8）：classic 普通对战 / level 闯关模式。 */
 const MODES = ['classic', 'level'];
-/** 时长上报允许的宽限（客户端帧率抖动 / 结算延时）。 */
-const DURATION_SLACK_MS = 5000;
 /** 上报缺省模式：历史客户端不带 mode 字段时按普通对战场处理。 */
 const DEFAULT_MODE = 'classic';
 
@@ -110,10 +109,17 @@ function validate(payload) {
     if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
     if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
   }
-  if (!isInt(p.durationMs) || p.durationMs < 0 || p.durationMs > GAME_HARD_LIMIT_MS + DURATION_SLACK_MS) {
+  if (!Number.isSafeInteger(p.durationMs) || p.durationMs < 0) {
     errors.push('durationMs 非法');
   }
   if (DIFFICULTY[p.difficulty] === undefined) errors.push('difficulty 非法');
+  if (
+    p.rankId !== undefined &&
+    p.rankId !== null &&
+    !PROGRESSION.ranks.some((rank) => rank.id === p.rankId)
+  ) {
+    errors.push('rankId 非法');
+  }
   // 判定分档与每日挑战标记（§6.2 / §4.4）：均为可选字段，出现时只做存在性/一致性校验。
   if (p.perfectHits !== undefined) {
     if (!isInt(p.perfectHits) || p.perfectHits < 0) errors.push('perfectHits 非法');
@@ -145,12 +151,12 @@ function validate(payload) {
 
   // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率，
   // 随机事件「手速狂潮」（§6.5）能量倍率再乘一次 —— 三档倍率都必须计入，否则合法上报会被误判为篡改。
-  if (
-    !isLevel &&
-    isInt(p.hits) &&
-    isInt(p.myEnergy) &&
-    p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER * EVENT_MAX_ENERGY_SCALE
-  ) {
+  const maxClassicHitEnergy = Math.round(
+    Math.round(
+      Math.round((HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) * EVENT_MAX_ENERGY_SCALE
+    ) * CLASSIC_MODE.energyScale.end
+  );
+  if (!isLevel && isInt(p.hits) && isInt(p.myEnergy) && p.myEnergy > p.hits * maxClassicHitEnergy) {
     errors.push('myEnergy 超过理论上限');
   }
 
@@ -161,16 +167,18 @@ function validate(payload) {
   }
 
   // 轮次一致性（§2.2 目标为颜色序列）：
-  //   每轮必然以「走完序列 / 点错 / 超时 / 硬上限截断」之一结束，且：
+  //   每轮必然以「走完序列 / 点错 / 超时」之一结束；闯关还可能由 45 秒硬上限截断，且：
   //     · 一轮最多贡献「该轮段数」次命中（上界）；
   //     · 未以失误/空轮结束的轮次（走完序列或截断）至少贡献 1 次命中（下界）。
-  //   注意：下界**不能**写成「走完的轮数 × N」——硬上限截断的轮次不足 N 段，会把合法上报误判为篡改。
+  //   注意：下界**不能**写成「走完的轮数 × N」——闯关硬上限截断的轮次不足 N 段，会把合法上报误判为篡改。
   //   闯关模式的段数随「关卡 + 局内轮次」变化 ⇒ 上界用 levels.maxSeqCapFor(level, rounds) 重算
   //   （客户端**不上报段数计划**，减少协议面与伪造面）。
   if (isInt(p.rounds) && isInt(p.hits) && isInt(p.misses) && isInt(p.timeouts)) {
     const clean = p.rounds - p.misses - p.timeouts; // 非「失误/空轮」结束的轮次
     const hitsMax =
-      isLevel && validLevel(p.level) ? levels.maxSeqCapFor(p.level, p.rounds) : p.rounds * SEQUENCE_LENGTH;
+      isLevel && validLevel(p.level)
+        ? levels.maxSeqCapFor(p.level, p.rounds)
+        : p.rounds * CLASSIC_MODE.sequenceLength.max;
     if (clean < 0) errors.push('rounds 小于失误与空轮之和，口径不一致');
     else if (p.hits < clean || p.hits > hitsMax) errors.push('hits 与轮次/序列长度不一致');
   }
@@ -257,6 +265,7 @@ async function recordResult(store, openid, payload, nowMs) {
     day,
     mode, // 'classic' | 'level'（§4.8，对局归类口径 §5.4）
     level: validLevel(payload.level) ? payload.level : null, // 闯关关卡号
+    rankId: payload.rankId || null, // 普通对战开局段位（动态难度归因）
     result: payload.result,
     difficulty: payload.difficulty,
     challengeMode: payload.challengeMode === true, // 每日挑战局单独归类（§4.4 已下线，仅历史兼容）
@@ -295,4 +304,4 @@ async function recordResult(store, openid, payload, nowMs) {
   });
 }
 
-module.exports = { RESULTS, DURATION_SLACK_MS, dayKey, validate, recordResult };
+module.exports = { RESULTS, dayKey, validate, recordResult };

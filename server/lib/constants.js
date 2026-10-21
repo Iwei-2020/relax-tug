@@ -29,6 +29,42 @@ module.exports = {
   "PERFECT_WINDOW_RATIO": 0.5,
   "PERFECT_MULTIPLIER": 1.5,
   "SEQUENCE_LENGTH": 3,
+  "CLASSIC_MODE": {
+    "timeRampMs": 90000,
+    "rankStart": {
+      "bronze": 0.25,
+      "silver": 0.32,
+      "gold": 0.39,
+      "platinum": 0.46,
+      "diamond": 0.53,
+      "master": 0.6
+    },
+    "sequenceLength": {
+      "min": 3,
+      "max": 6
+    },
+    "candidateTiers": [
+      6,
+      6,
+      9
+    ],
+    "windowMs": {
+      "start": 1600,
+      "end": 900
+    },
+    "opponentHit": {
+      "start": 0.58,
+      "end": 0.78
+    },
+    "opponentMiss": {
+      "start": 0.15,
+      "end": 0.1
+    },
+    "energyScale": {
+      "start": 0.05,
+      "end": 1.8
+    }
+  },
   "COUNTDOWN_MS": 3000,
   "ROUND_GAP_MS": 150,
   "MATCH_TIMEOUT_MS": 3000,
