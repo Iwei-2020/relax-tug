@@ -74,8 +74,10 @@ function applyHit(state, jitter, perfect, scale) {
  * 点错一次：扣分并清零连击（已获能量保留，不出现负能量）。
  * @returns {object} 新状态
  */
-function applyMiss(state) {
-  const delta = Math.min(state.energy, MISS_PENALTY);
+function applyMiss(state, scale) {
+  const multiplier = scale === undefined || !(scale > 0) ? 1 : scale;
+  const penalty = Math.max(1, Math.round(MISS_PENALTY * multiplier));
+  const delta = Math.min(state.energy, penalty);
   return {
     ...state,
     energy: Math.max(MIN_ENERGY, state.energy - delta),

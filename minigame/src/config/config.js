@@ -39,20 +39,42 @@ const CONFIG = {
   perfectMultiplier: 1.5, // 完美判定能量倍率（含连击加成后四舍五入取整）
 
   /* ── §2.2 目标颜色序列 ────────────────────────────────────────── */
-  // 一轮 = 一条 N 段颜色序列，玩家需按序逐段点中；固定 3 段（每段仍享 §6.4 的输入窗口）。
+  // 普通回合缺省序列长度；普通对战运行时使用 classicMode 的段位/时长曲线覆盖此值。
+  // 闯关模式使用 levelMode 派生的长度。
   // 序列内颜色互不重复 → 底部候选面板中每个目标色恰好一块，保留「唯一且明确」的正确答案（§3.2）。
   sequenceLength: 3,
 
-  /* ── §6.3 对局时长 ───────────────────────────────────────────── */
-  countdownMs: 3000, // 开局 3-2-1
+  /* ── §6.3 普通对战动态难度与能量曲线 ─────────────────────────── */
+  // 普通对战根据开局段位确定难度起点，并在前 90 秒持续升压；能量倍率按对局实际时长递增。
+  // 仅作为难度曲线的参考时长，不是对局时限；到 90 秒后参数保持在最高档，游戏仍继续直到越线。
+  classicMode: {
+    timeRampMs: 90000,
+    rankStart: {
+      bronze: 0.25,
+      silver: 0.32,
+      gold: 0.39,
+      platinum: 0.46,
+      diamond: 0.53,
+      master: 0.6,
+    },
+    sequenceLength: { min: 3, max: 6 },
+    candidateTiers: [6, 6, 9],
+    windowMs: { start: 1600, end: 900 },
+    opponentHit: { start: 0.58, end: 0.78 },
+    opponentMiss: { start: 0.15, end: 0.1 },
+    energyScale: { start: 0.05, end: 1.8 },
+  },
+
+  /* ── §6.3 开场与闯关模式时长 ─────────────────────────────────── */
+  countdownMs: 3000, // 闯关模式开局 3-2-1；普通对战直接开始
   roundGapMs: 150, // 轮次刷新停顿上限（保持节奏连贯）
   matchTimeoutMs: 3000, // 匹配超时后进入 AI 对局
-  gameHardLimitMs: 45000, // 单局硬性时长上限（超时按位移判定）
+  gameHardLimitMs: 45000, // 仅闯关模式固定时长（普通对战无时间上限）
 
   /* ── §6.4 平衡兜底（对玩家不可见） ─────────────────────────────── */
   // 阈值以**越线阈值的比例**表达（而非绝对值），随 winNetEnergy 自动跟随 —— 否则阈值上调后
   // 兜底会退化为「几乎不触发」。当前 = 160 × 0.5 = 80（相对介入点由原来的 60/80 = 75% 提前到 50%）。
-  // winAid 保持 0.05：实测上调到 0.12 / 0.15 / 0.22 会把中位时长顶到 41s / 45s / 45s，末段锁死在硬上限。
+  // 领先/落后保护只改变 Ghost 命中率；普通对战的时长和能量倍率由 classicMode 曲线控制。
   balance: {
     loseThresholdRatio: 0.5, // 玩家落后超过 0.5 × 越线阈值 → 对手命中率下调
     loseAid: 0.08, // 连败保护：下调 8%
@@ -72,14 +94,13 @@ const CONFIG = {
   /* ── §6.5 随机事件（局内临时修饰，由种子驱动，不改胜负条件） ──────── */
   // 硬性约束（§6.5）：事件只做「局内临时修饰」——能量倍率 / 输入窗口缩放 / 视觉遮挡；
   // **绝不**改变越线净能量差（winNetEnergy）与平局带宽，保证竞技公平与数值口径稳定。
-  // 触发时机与具体事件全部由 createRng(seed) 决定（与回合序列共用同一随机流），
-  // 每日挑战局因此能做到「同日同难度全球同一套事件」，可复现、可回放。
+  // 触发时机与具体事件全部由 createRng(seed) 决定（与回合序列共用同一随机流），同种子可复现。
   events: {
     enabled: true,
     maxPerMatch: 2, // 每局触发上限（避免局局必刷）
     firstCheckRound: 2, // 前 2 轮为热身，不打扰
     checkEveryRounds: 2, // 之后每 2 轮检查一次
-    chance: 0.3, // 每次检查的触发概率（rng 驱动）：单局轮数涨到 ≈18.6 后，0.45 会「局局必刷」
+    chance: 0.3, // 每次检查的触发概率（rng 驱动）
     durationMs: 6000, // 单个事件持续时长（按真实时间衰减）
     // 事件池：weight 为相对权重；效果字段仅允许 energyScale / windowScale / fog
     pool: [
@@ -118,7 +139,7 @@ const CONFIG = {
   // 硬约束：每轮候选数 ≥ 该轮段数（由 core/levels.js#levelConfig 内部兜底）。
   levelMode: {
     maxLevel: 100, // 1–100 关
-    lives: 3, // 点错目标色 / 某段超时各扣 1；归零后仍继续游戏至 45 秒
+    lives: 3, // 点错目标色 / 某段超时各扣 1；归零立即失败
     energyMax: 100, // 能量进度达到 100% 即过关
     energyScale: 0.13, // 缩小单次能量变化，让进度由更多轮次逐步累积
     keyframes: [ // t ∈ [0,1]，按 at 升序且首尾为 0 / 1；tier 指向 difficulty 档
@@ -198,6 +219,7 @@ module.exports = {
   PERFECT_MULTIPLIER: CONFIG.perfectMultiplier,
 
   SEQUENCE_LENGTH: CONFIG.sequenceLength,
+  CLASSIC_MODE: CONFIG.classicMode,
 
   COUNTDOWN_MS: CONFIG.countdownMs,
   ROUND_GAP_MS: CONFIG.roundGapMs,

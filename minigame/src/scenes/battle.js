@@ -102,6 +102,7 @@ function drawLevelHud(ctx, layout, match) {
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {string} [options.difficulty] 难度档（服务端下发失败时用本地默认档兜底）
+ * @param {string} [options.rankId] 普通对战开始时的玩家段位
  * @param {number} [options.seed] 伪随机种子（闯关每关固定种子 / 测试 / 回放用）
  * @param {boolean} [options.challenge] 是否每日挑战局（§4.4 已下线，仅历史兼容）
  * @param {'classic'|'level'} [options.mode] 对局模式（§4.8：'level' 为闯关模式）
@@ -113,14 +114,18 @@ function createBattleScene(options) {
   const layout = opts.layout;
   const rand = opts.seed === undefined ? createRng(Date.now() & 0x7fffffff) : createRng(opts.seed);
 
-  let match = createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true, mode: opts.mode, level: opts.level });
+  let match = createMatch({
+    difficulty: opts.difficulty,
+    rankId: opts.rankId,
+    challenge: opts.challenge === true,
+    mode: opts.mode,
+    level: opts.level,
+  });
   let roundLeftMs = 0;
   let gapLeftMs = 0;
   let endDelayMs = 0;
   let finished = false;
   // 自上次结算以来消耗的时间（含轮间停顿），作为 submit 的 dtMs。
-  // 必须累计「已消耗」而不是「剩余」，否则超时结算会传入负值，导致对局计时停摆、
-  // 45s 硬上限永远不触发。
   let spentMs = 0;
 
   let pressedIndex = -1;
@@ -149,8 +154,6 @@ function createBattleScene(options) {
     impulseKind: 'hit',
   };
 
-  track(EVENTS.MATCH_START, { mode: match.mode, level: match.level, difficulty: match.difficulty, phase: 'countdown' });
-
   /**
    * 轮间刷新：把「窗口重置 + 随机事件播报」合并到一处（§6.5 触发检查点在轮间）。
    * 事件由 core 在 nextRound 内确定性触发，这里只负责表现层反馈（横幅脉冲 + 震动 + 埋点）。
@@ -166,6 +169,17 @@ function createBattleScene(options) {
       track(EVENTS.RANDOM_EVENT, { id: ev ? ev.id : '', round: match.roundIndex });
     }
   }
+
+  if (match.phase === 'playing') {
+    match = nextRound(match, rand);
+    refreshRound();
+  }
+  track(EVENTS.MATCH_START, {
+    mode: match.mode,
+    level: match.level,
+    difficulty: match.difficulty,
+    phase: match.phase,
+  });
 
   /**
    * 结算序列中的**一段**：
@@ -362,19 +376,21 @@ function createBattleScene(options) {
         ctx.stroke();
       }
 
-      // 剩余对局时间（硬上限 §6.3）：居中显示在两枚阵营徽章之间
-      const leftSec = Math.max(0, Math.ceil((GAME_HARD_LIMIT_MS - match.elapsedMs) / 1000));
-      ctx.fillStyle = MACARON.ink;
-      ctx.font = 'bold 15px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${leftSec}s`, W / 2, layout.rope.badge.y);
+      // 仅闯关模式显示固定 45 秒剩余时间；普通对战没有整局倒计时或时限。
+      if (match.mode === 'level') {
+        const leftSec = Math.max(0, Math.ceil((GAME_HARD_LIMIT_MS - match.elapsedMs) / 1000));
+        ctx.fillStyle = MACARON.ink;
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${leftSec}s`, W / 2, layout.rope.badge.y);
+      }
 
       // 闯关模式 HUD（§4.8）：关卡号 + 剩余机会（普通对战不呈现）
       if (match.mode === 'level') drawLevelHud(ctx, layout, match);
 
-      // 倒计时浮层：必须最后画，盖住三分区面板与目标色块（§4.1 开局 3-2-1）
-      drawCountdown(ctx, layout, ropeView);
+      // 仅闯关模式保留 3-2-1 开场；普通对战直接开始。
+      if (match.mode === 'level') drawCountdown(ctx, layout, ropeView);
     },
 
     onTouchStart(x, y) {
@@ -395,10 +411,17 @@ function createBattleScene(options) {
       return match;
     },
 
-    /** 复位到倒计时（重开一局时复用同一难度与模式）。 */
+    /** 重开一局；普通对战立即进入，闯关保留开场倒计时。 */
     reset() {
-      match = createMatch({ difficulty: opts.difficulty, challenge: opts.challenge === true, mode: opts.mode, level: opts.level });
+      match = createMatch({
+        difficulty: opts.difficulty,
+        rankId: opts.rankId,
+        challenge: opts.challenge === true,
+        mode: opts.mode,
+        level: opts.level,
+      });
       roundLeftMs = 0;
+      spentMs = 0;
       gapLeftMs = 0;
       endDelayMs = 0;
       finished = false;
@@ -409,6 +432,10 @@ function createBattleScene(options) {
       lastFired = 0;
       eventPopLeftMs = 0;
       tMs = 0;
+      if (match.phase === 'playing') {
+        match = nextRound(match, rand);
+        refreshRound();
+      }
     },
   };
 }

@@ -37,9 +37,9 @@ function createGhost(difficultyKey) {
  * @param {object} ghost 对手状态
  * @param {number} playerEnergy 我方当前能量
  */
-function effectiveHitRate(ghost, playerEnergy) {
+function effectiveHitRate(ghost, playerEnergy, baseHitRate) {
   const lead = playerEnergy - ghost.state.energy; // 正 = 我方领先
-  let rate = ghost.oppHit;
+  let rate = baseHitRate === undefined ? ghost.oppHit : baseHitRate;
   if (lead > BALANCE.winThresholdRatio * WIN_NET_ENERGY) rate += BALANCE.winAid;
   else if (lead < -BALANCE.loseThresholdRatio * WIN_NET_ENERGY) rate -= BALANCE.loseAid;
   return Math.max(0, Math.min(1, rate));
@@ -52,17 +52,19 @@ function effectiveHitRate(ghost, playerEnergy) {
  * @param {() => number} rand 伪随机源
  * @returns {{state:object, gained:number, hit:boolean, hitRate:number}} 新对手状态 + 本段净变化
  */
-function stepGhost(ghost, playerEnergy, rand) {
-  const hitRate = effectiveHitRate(ghost, playerEnergy);
+function stepGhost(ghost, playerEnergy, rand, options) {
+  const opts = options || {};
+  const hitRate = effectiveHitRate(ghost, playerEnergy, opts.oppHit);
   let state;
   let hit;
   if (rand() < hitRate) {
     hit = true;
     // §6.4：加入 ±10% 随机浮动，制造「势均力敌」的紧张感
-    state = applyHit(ghost.state, 0.9 + 0.2 * rand());
+    state = applyHit(ghost.state, 0.9 + 0.2 * rand(), false, opts.energyScale);
   } else {
     hit = false;
-    state = rand() < ghost.oppMiss ? applyMiss(ghost.state) : applyTimeout(ghost.state);
+    const missRate = opts.oppMiss === undefined ? ghost.oppMiss : opts.oppMiss;
+    state = rand() < missRate ? applyMiss(ghost.state, opts.energyScale) : applyTimeout(ghost.state);
   }
   return { state, gained: state.lastGain, hit, hitRate };
 }

@@ -26,7 +26,6 @@ const { shareBattle } = require('../platform/share.js');
 const { showRewardedVideo, AD_UNITS } = require('../platform/ad.js');
 const { setSinkPath, track, EVENTS } = require('../utils/tracker.js');
 const cloud = require('../net/cloud.js');
-const { DEFAULT_DIFFICULTY } = require('../config/config.js');
 const progression = require('../core/progression.js');
 const levelsCore = require('../core/levels.js');
 const livesCore = require('../core/lives.js');
@@ -319,7 +318,8 @@ function boot() {
     game.setScene(
       createBattleScene({
         layout,
-        difficulty: DEFAULT_DIFFICULTY, // TODO(接入云函数后)：改由 matchGhost 服务端下发
+        difficulty: opts.difficulty,
+        rankId: mode === 'classic' ? player.progress.rankId : undefined,
         mode,
         level,
         seed: opts.seed,
