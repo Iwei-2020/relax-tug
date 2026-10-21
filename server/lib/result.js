@@ -19,13 +19,13 @@ const {
   SEQUENCE_LENGTH,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
-  DRAW_BAND_PX,
   GAME_HARD_LIMIT_MS,
   DIFFICULTY,
   EVENT_MAX_ENERGY_SCALE,
   EVENT_MAX_PER_MATCH,
   LEVEL_MAX,
   LEVEL_LIVES,
+  LEVEL_MODE,
   MONETIZATION,
 } = require('./constants.js');
 const { CODES, ok, fail } = require('./envelope.js');
@@ -82,8 +82,35 @@ function validate(payload) {
   if (!isInt(p.timeouts) || p.timeouts < 0) errors.push('timeouts 非法');
   if (!isInt(p.bestCombo) || p.bestCombo < 0) errors.push('bestCombo 非法');
   if (isInt(p.bestCombo) && isInt(p.hits) && p.bestCombo > p.hits) errors.push('bestCombo 超过 hits');
-  if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
-  if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
+  if (isLevel) {
+    if (!isInt(p.energyPct) || p.energyPct < 0 || p.energyPct > LEVEL_MODE.energyMax) errors.push('energyPct 非法');
+    else if (
+      isInt(p.hits) &&
+      p.energyPct >
+        Math.min(
+          LEVEL_MODE.energyMax,
+          p.hits *
+            Math.round(
+              Math.round(
+                Math.round((HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) * EVENT_MAX_ENERGY_SCALE
+              ) * LEVEL_MODE.energyScale
+            )
+        )
+    ) {
+      errors.push('energyPct 超过理论上限');
+    }
+    if (
+      p.myEnergy !== undefined ||
+      p.oppEnergy !== undefined ||
+      p.netEnergy !== undefined ||
+      p.displacementPx !== undefined
+    ) {
+      errors.push('闯关摘要包含对战字段');
+    }
+  } else {
+    if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
+    if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
+  }
   if (!isInt(p.durationMs) || p.durationMs < 0 || p.durationMs > GAME_HARD_LIMIT_MS + DURATION_SLACK_MS) {
     errors.push('durationMs 非法');
   }
@@ -105,6 +132,13 @@ function validate(payload) {
   if (isLevel) {
     if (!validLevel(p.level)) errors.push('level 非法');
     if (!isInt(p.livesLeft) || p.livesLeft < 0 || p.livesLeft > LEVEL_LIVES) errors.push('livesLeft 非法');
+    if (
+      isInt(p.durationMs) &&
+      p.durationMs !== GAME_HARD_LIMIT_MS &&
+      !(p.result === 'lose' && p.livesLeft === 0)
+    ) {
+      errors.push('闯关时长必须为 45 秒，生命耗尽失败除外');
+    }
     if (validLevel(p.level) && DIFFICULTY[p.difficulty] !== undefined) {
       if (p.difficulty !== levels.levelConfig(p.level, 0).tier) errors.push('difficulty 与关卡入门档不一致');
     }
@@ -113,6 +147,7 @@ function validate(payload) {
   // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率，
   // 随机事件「手速狂潮」（§6.5）能量倍率再乘一次 —— 三档倍率都必须计入，否则合法上报会被误判为篡改。
   if (
+    !isLevel &&
     isInt(p.hits) &&
     isInt(p.myEnergy) &&
     p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER * EVENT_MAX_ENERGY_SCALE
@@ -120,11 +155,9 @@ function validate(payload) {
     errors.push('myEnergy 超过理论上限');
   }
 
-  // 位移必须与「双方能量差」严格一致（公式见说明书 §2.4）。
-  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→74，§6.7）；普通对战用全局系数。
-  if (isInt(p.myEnergy) && isInt(p.oppEnergy)) {
-    const factor = isLevel && validLevel(p.level) ? levels.displacementFactorOf(p.level) : DISPLACEMENT_FACTOR;
-    const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * factor);
+  // 普通对战位移必须与双方能量差一致；闯关只使用单边百分比进度。
+  if (!isLevel && isInt(p.myEnergy) && isInt(p.oppEnergy)) {
+    const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * DISPLACEMENT_FACTOR);
     if (p.displacementPx !== expectedPx) errors.push('位移与能量不一致');
   }
 
@@ -143,16 +176,19 @@ function validate(payload) {
     else if (p.hits < clean || p.hits > hitsMax) errors.push('hits 与轮次/序列长度不一致');
   }
 
-  // 闯关模式收官一致性（§2.3 / §4.8 优先级：越线 > 对方越线 > 生命耗尽 > 硬上限）：
-  // 服务端不信任 `endKind`，只用「位移 + 剩余生命」两条可观测量推出**必然成立**的恒等式。
-  if (isLevel && RESULTS.includes(p.result) && typeof p.displacementPx === 'number') {
-    const px = p.displacementPx;
-    if (px >= DISPLACEMENT_MAX_PX && p.result !== 'win') errors.push('已越线却未判胜');
-    if (px <= -DISPLACEMENT_MAX_PX && p.result !== 'lose') errors.push('已被越线却未判负');
-    if (isInt(p.livesLeft) && p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
-    if (p.result === 'win' && !(px > 0)) errors.push('判胜但位移未偏向我方');
-    if (p.result === 'lose' && !(px < 0 || p.livesLeft === 0)) errors.push('判负但位移偏向我方且生命未耗尽');
-    if (p.result === 'draw' && Math.abs(px) > DRAW_BAND_PX) errors.push('判平局但位移超出平局带宽');
+  // 闯关只按单边 0–100% 能量校验胜负；时长必须恰为 45 秒。
+  if (isLevel && RESULTS.includes(p.result)) {
+    if (p.result === 'draw') errors.push('闯关模式不支持平局');
+    if (p.result === 'win') {
+      if (p.energyPct !== LEVEL_MODE.energyMax) errors.push('能量未满却判胜');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS) errors.push('闯关胜利必须持续 45 秒');
+      if (p.livesLeft === 0) errors.push('生命耗尽却判胜');
+    }
+    if (p.result === 'lose') {
+      if (p.energyPct === LEVEL_MODE.energyMax && p.livesLeft !== 0) errors.push('能量已满却判负');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且生命未耗尽却判负');
+    }
+    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
   }
 
   return { ok: errors.length === 0, errors };
@@ -236,10 +272,14 @@ async function recordResult(store, openid, payload, nowMs) {
     timeouts: payload.timeouts,
     bestCombo: payload.bestCombo,
     accuracy: payload.accuracy,
-    myEnergy: payload.myEnergy,
-    oppEnergy: payload.oppEnergy,
-    netEnergy: payload.netEnergy,
-    displacementPx: payload.displacementPx,
+    ...(isLevel
+      ? { energyPct: payload.energyPct }
+      : {
+          myEnergy: payload.myEnergy,
+          oppEnergy: payload.oppEnergy,
+          netEnergy: payload.netEnergy,
+          displacementPx: payload.displacementPx,
+        }),
     awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
     awardCoins: award.coins,
     createdAt: nowMs,

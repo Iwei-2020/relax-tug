@@ -169,15 +169,10 @@ module.exports = {
     "chestCoins": 100
   },
   "LEVEL_MODE": {
-    "enabled": true,
     "maxLevel": 100,
     "lives": 3,
-    "maxRounds": 60,
-    "winNetEnergy": {
-      "from": 112,
-      "to": 74
-    },
-    "oppHitScale": 0.35,
+    "energyMax": 100,
+    "energyScale": 0.13,
     "keyframes": [
       {
         "at": 0,
@@ -213,10 +208,7 @@ module.exports = {
       9
     ],
     "candidateFrom": 0,
-    "candidateTo": 1,
-    "sanity": {
-      "minWinNetEnergy": 40
-    }
+    "candidateTo": 1
   },
   "LEVEL_MAX": 100,
   "LEVEL_LIVES": 3,

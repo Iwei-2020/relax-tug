@@ -98,8 +98,6 @@ function applyTimeout(state) {
  * 绳子位移（§2.4 公式）：(我方能量 - 对方能量) × 位移系数，并夹在 ±上限内。
  * 正值 = 绳子被我方拉向己侧。
  * @param {number} [factor] 位移系数；缺省 = 普通对战的 `DISPLACEMENT_FACTOR`。
- *   闯关模式传 `levels.displacementFactorOf(level)`（= 220 / winNetEnergyOf(level)，§6.7）——
- *   「越线 = 位移达 ±上限」的定义一字不变，只换「能量 → 像素」的比例。
  */
 function displacement(myEnergy, oppEnergy, factor) {
   const f = factor === undefined || !(factor > 0) ? DISPLACEMENT_FACTOR : factor;

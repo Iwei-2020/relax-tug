@@ -182,6 +182,11 @@ function createBattleScene(options) {
     match = submit(match, clickedId, spentMs, rand);
     spentMs = 0;
 
+    if (isOver(match)) {
+      endDelayMs = END_DELAY_MS;
+      return;
+    }
+
     const seqAdvanced = match.round ? match.round.seqIndex > beforeSeq : false;
     const roundEnded = match.roundIndex !== beforeRound;
     if (!seqAdvanced && !roundEnded) return; // 未发生结算（无当前轮）
@@ -205,12 +210,8 @@ function createBattleScene(options) {
     impulseKind = last.kind === 'hit' ? 'hit' : 'miss';
     impulseLeftMs = IMPULSE_MS * (last.kind === 'hit' ? 1 + Math.min(1, last.comboAfter / 10) : 1);
 
-    if (isOver(match)) {
-      endDelayMs = END_DELAY_MS;
-    } else {
-      roundLeftMs = match.round.windowMs; // 每段一格时间：推进到下一段或新轮都重置为满
-      if (roundEnded) gapLeftMs = ROUND_GAP_MS;
-    }
+    roundLeftMs = match.round.windowMs; // 每段一格时间：推进到下一段或新轮都重置为满
+    if (roundEnded) gapLeftMs = ROUND_GAP_MS;
   }
 
   return {
@@ -291,7 +292,9 @@ function createBattleScene(options) {
       // 顶部拔河视图的共享入参（复用同一对象，供拔河与倒计时浮层共享）
       ropeView.px = match.px;
       ropeView.myEnergy = match.player.energy;
-      ropeView.oppEnergy = match.ghost.state.energy;
+      ropeView.oppEnergy = match.ghost ? match.ghost.state.energy : 0;
+      ropeView.mode = match.mode;
+      ropeView.progressPct = match.mode === 'level' ? match.player.energy : 0;
       ropeView.phase = match.phase;
       ropeView.countdownLeftMs = match.phase === 'countdown' ? match.countdownLeftMs : 0;
       ropeView.tMs = tMs;
@@ -336,6 +339,7 @@ function createBattleScene(options) {
         combo: match.player.combo,
         comboPop,
         perfect: perfectLeftMs > 0,
+        tMs,
       });
 
       drawPalette(ctx, layout, match.round, { pressedIndex, hitIndex, missIndex });

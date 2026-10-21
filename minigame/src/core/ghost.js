@@ -10,8 +10,8 @@
  *   **逐段**（不是每轮一次）先按难度档 `oppHit` 掷骰是否命中（命中则按 §6.2 同口径吃连击加成，
  *   并加 ±10% 浮动）；未命中时，再按 `oppMiss` 掷骰决定是「点错扣分」还是「空轮不计」。
  *   —— 与玩家侧**逐段对称**：玩家每点一段、AI 就在同一段掷一次骰（见核心循环 core/battle.js#submit）。
- *   最后叠加**平衡兜底**（对玩家不可见）：玩家落后超过 0.5×越线阈值时对手命中率 -8%（连败保护），
- *   玩家领先超过 0.5×越线阈值时 +5%（防碾压）。阈值以比例表达，随越线阈值自动跟随（§6.4）。
+ *   最后叠加**平衡兜底**（对玩家不可见）：领先或落后超过普通对战越线阈值的 50% 时，
+ *   对手命中率按配置轻微调整（§6.4）。
  */
 
 const { DIFFICULTY, DEFAULT_DIFFICULTY, BALANCE, WIN_NET_ENERGY } = require('../config/config.js');
@@ -20,35 +20,28 @@ const { createEnergyState, applyHit, applyMiss, applyTimeout } = require('./ener
 /**
  * 创建对手状态；非法难度 key 回落默认档。
  * @param {string} difficultyKey easy | normal | hard | hell
- * @param {{oppHit?:number, oppMiss?:number, winNetEnergy?:number}} [overrides]
- *   闯关模式覆盖项（§4.8 / §6.7）：命中率 / 失误率取自 core/levels.js#levelConfig（已含陪练弱化），
- *   越线阈值用于**平衡兜底的比例换算**。缺省时与普通对战完全一致。
  */
-function createGhost(difficultyKey, overrides) {
+function createGhost(difficultyKey) {
   const key = DIFFICULTY[difficultyKey] ? difficultyKey : DEFAULT_DIFFICULTY;
   const diff = DIFFICULTY[key];
-  const o = overrides || {};
   return {
     difficulty: key,
-    oppHit: o.oppHit === undefined ? diff.oppHit : o.oppHit,
-    oppMiss: o.oppMiss === undefined ? diff.oppMiss : o.oppMiss,
-    winNetEnergy: o.winNetEnergy === undefined ? WIN_NET_ENERGY : o.winNetEnergy,
+    oppHit: diff.oppHit,
+    oppMiss: diff.oppMiss,
     state: createEnergyState(),
   };
 }
 
 /**
- * 计入平衡兜底后的实际命中率。阈值以**比例**表达（`BALANCE.*Ratio × 本局越线阈值`，
- * 普通对战 = 160，闯关模式 = `winNetEnergyOf(level)`，§6.7），保持「改一个数，处处跟随」。
+ * 计入普通对战平衡兜底后的实际命中率。
  * @param {object} ghost 对手状态
  * @param {number} playerEnergy 我方当前能量
  */
 function effectiveHitRate(ghost, playerEnergy) {
-  const winNetEnergy = ghost.winNetEnergy === undefined ? WIN_NET_ENERGY : ghost.winNetEnergy;
   const lead = playerEnergy - ghost.state.energy; // 正 = 我方领先
   let rate = ghost.oppHit;
-  if (lead > BALANCE.winThresholdRatio * winNetEnergy) rate += BALANCE.winAid;
-  else if (lead < -BALANCE.loseThresholdRatio * winNetEnergy) rate -= BALANCE.loseAid;
+  if (lead > BALANCE.winThresholdRatio * WIN_NET_ENERGY) rate += BALANCE.winAid;
+  else if (lead < -BALANCE.loseThresholdRatio * WIN_NET_ENERGY) rate -= BALANCE.loseAid;
   return Math.max(0, Math.min(1, rate));
 }
 

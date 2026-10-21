@@ -39,38 +39,31 @@ test('常量：关卡上限 / 生命值 / 段数区间 / 候选档位与调色�
   assert.equal(PALETTE_MAX, 9);
 });
 
-test('锚点：keyframeParams 在关键帧上取到该档原值（windowMs / oppHit）', () => {
+test('锚点：keyframeParams 在关键帧上取到该档输入窗口', () => {
   const easy = client.keyframeParams(0);
   assert.equal(easy.tier, 'easy');
   assert.equal(easy.windowMs, 1600);
-  assert.ok(Math.abs(easy.oppHit - 0.6) < 1e-9);
 
   const normal = client.keyframeParams(0.34);
   assert.equal(normal.tier, 'normal');
   assert.equal(normal.windowMs, 1400);
-  assert.ok(Math.abs(normal.oppHit - 0.7) < 1e-9);
 
   const hard = client.keyframeParams(0.67);
   assert.equal(hard.tier, 'hard');
   assert.equal(hard.windowMs, 1200);
-  assert.ok(Math.abs(hard.oppHit - 0.82) < 1e-9);
 
   const hell = client.keyframeParams(1);
   assert.equal(hell.tier, 'hell');
   assert.equal(hell.windowMs, 1100);
-  assert.ok(Math.abs(hell.oppHit - 0.9) < 1e-9);
-  // 陪练弱化：>=1 帧的 oppHit 再乘 oppHitScale（0.35）
-  assert.ok(Math.abs(client.widen(hell.oppHit) - 0.315) < 1e-9);
 });
 
-test('锚点：levelConfig(L1, 0) 与 levelConfig(L100, 上限轮) 落在地狱 / 简单端的期望值', () => {
+test('锚点：levelConfig(L1, 0) 与 levelConfig(L100, 上限轮) 符合关卡曲线', () => {
   const l1 = client.levelConfig(1, 0);
   assert.equal(l1.level, 1);
   assert.equal(l1.seqLen, 1);
   assert.equal(l1.candidates, 2);
   assert.equal(l1.windowMs, 1600);
   assert.equal(l1.tier, 'easy');
-  assert.equal(l1.winNetEnergy, 112);
 
   const l100 = client.levelConfig(100, 60);
   assert.equal(l100.level, 100);
@@ -78,15 +71,6 @@ test('锚点：levelConfig(L1, 0) 与 levelConfig(L100, 上限轮) 落在地狱 
   assert.equal(l100.candidates, 9);
   assert.equal(l100.windowMs, 1100);
   assert.equal(l100.tier, 'hell');
-  assert.equal(l100.winNetEnergy, 74);
-
-  // 越线阈值随关卡单调不增，且夹在 sanity 下限之上
-  assert.equal(client.winNetEnergyOf(1), 112);
-  assert.equal(client.winNetEnergyOf(100), 74);
-  assert.ok(client.winNetEnergyOf(50) < client.winNetEnergyOf(1));
-  assert.ok(client.winNetEnergyOf(50) > client.winNetEnergyOf(100));
-  // 位移系数 = 220 / 阈值
-  assert.ok(Math.abs(client.displacementFactorOf(100) - 220 / 74) < 1e-9);
 });
 
 test('爬坡档位：段数 1–6 与候选 2/4/6/9 的推进区间（说明书 §6.7 档位区间表）', () => {
@@ -124,21 +108,18 @@ test('全枚举 L1..100 × R0..60：单调不减、单调不增、硬约束恒�
   let prevSeq = -1;
   let prevCand = -1;
   let prevWindow = Infinity;
-  let prevOppHit = -1;
   for (let l = 1; l <= LEVEL_MAX; l += 1) {
     // 每个关卡内：roundIndex 递增 → 强度递增
     prevU = -1;
     prevSeq = -1;
     prevCand = -1;
     prevWindow = Infinity;
-    prevOppHit = -1;
     for (let r = 0; r < rounds; r += 1) {
       const c = client.levelConfig(l, r);
       assert.ok(c.u >= prevU - 1e-12, `u 应随轮次单调不减（L${l} R${r}）`);
       assert.ok(c.seqLen >= prevSeq, `seqLen 应随轮次单调不减（L${l} R${r}）`);
       assert.ok(c.candidates >= prevCand, `candidates 应随轮次单调不减（L${l} R${r}）`);
       assert.ok(c.windowMs <= prevWindow, `windowMs 应随轮次单调不增（L${l} R${r}）`);
-      assert.ok(c.oppHit >= prevOppHit - 1e-12, `oppHit 应随轮次单调不减（L${l} R${r}）`);
       // 硬约束：候选 ≥ 段数，且候选只取合法档位
       assert.ok(c.candidates >= c.seqLen, `候选数必须 ≥ 段数（L${l} R${r}）`);
       assert.ok(CANDIDATE_TIERS.indexOf(c.candidates) >= 0, `候选档位非法（L${l} R${r}）`);
@@ -147,7 +128,6 @@ test('全枚举 L1..100 × R0..60：单调不减、单调不增、硬约束恒�
       prevSeq = c.seqLen;
       prevCand = c.candidates;
       prevWindow = c.windowMs;
-      prevOppHit = c.oppHit;
     }
   }
 });
@@ -197,8 +177,6 @@ test('两端等价：levelConfig / 各派生函数对 2000 组输入逐字段相
     const u = rand();
     assert.equal(client.seqLenAt(u), server.seqLenAt(u));
     assert.equal(client.candidatesAt(u), server.candidatesAt(u));
-    assert.equal(client.winNetEnergyOf(level), server.winNetEnergyOf(level));
-    assert.equal(client.displacementFactorOf(level), server.displacementFactorOf(level));
     assert.equal(client.maxSeqLenFor(level, roundIndex), server.maxSeqLenFor(level, roundIndex));
     assert.equal(
       client.maxSeqCapFor(level, roundIndex),

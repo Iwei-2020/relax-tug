@@ -21,9 +21,13 @@ const {
   summary,
 } = require('../minigame/src/core/battle.js');
 const { createRng } = require('../minigame/src/core/rng.js');
-const { displacement } = require('../minigame/src/core/energy.js');
 const levels = require('../minigame/src/core/levels.js');
-const { COUNTDOWN_MS, LEVEL_LIVES, GAME_HARD_LIMIT_MS } = require('../minigame/src/config/config.js');
+const {
+  COUNTDOWN_MS,
+  LEVEL_LIVES,
+  LEVEL_ENERGY_MAX,
+  GAME_HARD_LIMIT_MS,
+} = require('../minigame/src/config/config.js');
 
 const FAST_SEG_MS = 100;
 
@@ -35,6 +39,7 @@ function playOut(match, rand, decide) {
   let m = match;
   let guard = 0;
   while (!isOver(m) && guard < 500) {
+    if (m.round && m.round.done) m = nextRound(m, rand);
     m = submit(m, decide(m), FAST_SEG_MS, rand);
     if (!isOver(m)) m = nextRound(m, rand);
     guard += 1;
@@ -45,8 +50,8 @@ function playOut(match, rand, decide) {
 
 /* ── 装配 ─────────────────────────────────────────────────────── */
 
-test('createMatch(mode:level)：装配关卡参数、3 条生命、对手按陪练弱化', () => {
-  const m = createMatch({ mode: 'level', level: 5 });
+test('createMatch(mode:level)：装配关卡参数与 3 条生命，不创建对战方', () => {
+  let m = createMatch({ mode: 'level', level: 5 });
   assert.equal(m.mode, 'level');
   assert.equal(m.level, 5);
   assert.equal(m.livesLeft, LEVEL_LIVES);
@@ -55,10 +60,11 @@ test('createMatch(mode:level)：装配关卡参数、3 条生命、对手按陪�
   assert.ok(m.levelCfg, '闯关模式应携带本关参数');
   assert.equal(m.levelCfg.level, 5);
   assert.equal(m.challenge, false, '闯关模式不是每日挑战');
-  // 对手命中率 = 关键帧插值 × oppHitScale（陪练弱化，§6.7）
-  assert.ok(m.ghost.oppHit < LEVEL_LIVES, 'sanity');
-  assert.ok(Math.abs(m.ghost.oppHit - levels.levelConfig(5, 0).oppHit) < 1e-12);
-  assert.ok(m.ghost.winNetEnergy === levels.winNetEnergyOf(5));
+  assert.equal(m.ghost, null);
+  assert.equal(m.levelCfg.oppHit, undefined);
+  assert.equal(m.levelCfg.winNetEnergy, undefined);
+  m = nextRound(beginPlaying(m), createRng(5));
+  assert.equal(m.ghost, null, '生成闯关轮次时也不装配对战方');
 
   // 普通对战仍是 classic、livesLeft 为 null
   const c = createMatch({ difficulty: 'normal' });
@@ -117,7 +123,7 @@ test('每轮参数：段数与候选随「关卡 + 局内轮次」爬坡，且�
 
 /* ── 生命值（需求 4） ───────────────────────────────────────────── */
 
-test('生命值：点错 3 次即闯关失败，剩余生命归零', () => {
+test('生命归零立即进入闯关失败结算', () => {
   const rand = createRng(2026);
   let m = beginPlaying(createMatch({ mode: 'level', level: 40 }));
   m = nextRound(m, rand);
@@ -135,15 +141,16 @@ test('生命值：点错 3 次即闯关失败，剩余生命归零', () => {
   m = nextRound(m, rand);
   m = submit(m, wrong(m), FAST_SEG_MS, rand);
   assert.equal(m.livesLeft, 0);
-  assert.equal(m.result, 'lose', '第 3 条命耗尽即闯关失败');
+  assert.equal(m.result, 'lose');
   assert.equal(isOver(m), true);
-  assert.equal(m.round.done, true, '收官时本轮也要记为结束（服务端一致性口径）');
+  assert.equal(m.round.done, true, '生命耗尽时当前轮应结束');
 
   const s = summary(m);
   assert.equal(s.result, 'lose');
   assert.equal(s.mode, 'level');
   assert.equal(s.level, 40);
   assert.equal(s.livesLeft, 0);
+  assert.equal(s.durationMs, FAST_SEG_MS * 3, '生命耗尽失败不等待 45 秒');
 });
 
 test('生命值：某段超时同样扣 1 条命（§4.8 口径：点错 + 超时都扣命）', () => {
@@ -155,35 +162,56 @@ test('生命值：某段超时同样扣 1 条命（§4.8 口径：点错 + 超�
   assert.equal(m.livesLeft, 2, '超时扣 1 条命');
 });
 
-test('收官优先级：越线优先于生命耗尽（全命中 → 过关，生命不降）', () => {
+test('生命耗尽优先于已达成的能量目标，仍立即判负', () => {
+  const rand = createRng(909);
+  let m = beginPlaying(createMatch({ mode: 'level', level: 1 }));
+  m = nextRound(m, rand);
+  m = {
+    ...m,
+    goalReached: true,
+    player: { ...m.player, energy: LEVEL_ENERGY_MAX },
+    livesLeft: 1,
+  };
+  const wrong = m.round.optionIds.find((id) => id !== curTarget(m));
+  m = submit(m, wrong, FAST_SEG_MS, rand);
+  assert.equal(m.livesLeft, 0);
+  assert.equal(m.result, 'lose');
+  assert.equal(m.phase, 'over');
+});
+
+test('闯关能量达到 100% 后继续游戏，固定 45 秒时结算胜利', () => {
   const rand = createRng(20261019);
   let m = beginPlaying(createMatch({ mode: 'level', level: 3 }));
   m = nextRound(m, rand);
+  let guard = 0;
+  while (m.player.energy < LEVEL_ENERGY_MAX && guard < 200) {
+    if (m.round.done) m = nextRound(m, rand);
+    m = submit(m, curTarget(m), FAST_SEG_MS, rand);
+    guard += 1;
+  }
+  assert.ok(guard < 200, '连续命中应能充满能量');
+  assert.equal(m.player.energy, LEVEL_ENERGY_MAX);
+  assert.equal(isOver(m), false, '能量满格也要继续进行到 45 秒');
   const done = playOut(m, rand, curTarget);
-  assert.equal(done.result, 'win', '全命中必然越线过关');
+  assert.equal(done.result, 'win', '满能量状态应保留至固定时长结算');
   assert.equal(done.livesLeft, LEVEL_LIVES, '整局未失误，生命不应被扣');
-  assert.equal(done.px, 220, '越线定义不变：位移达 ±上限');
+  assert.equal(done.player.energy, LEVEL_ENERGY_MAX);
+  assert.equal(done.elapsedMs, GAME_HARD_LIMIT_MS);
+  const s = summary(done);
+  assert.equal(s.energyPct, 100);
+  assert.equal(s.oppEnergy, undefined);
+  assert.equal(s.netEnergy, undefined);
+  assert.equal(s.displacementPx, undefined);
 });
 
-/* ── 位移系数按关卡派生（§6.7） ────────────────────────────────── */
-
-test('位移系数：同能量差下，闯关模式的位移大于普通对战（阈值更低）', () => {
-  const lv = levels.displacementFactorOf(1);
-  const classic = displacement(100, 0);
-  const levelPx = displacement(100, 0, lv);
-  assert.ok(levelPx > classic, '闯关阈值 112 < 160 ⇒ 单位能量的像素更多');
-  assert.ok(Math.abs(levelPx - 100 * (220 / 112)) < 1e-9);
-  // 关卡越高阈值越低 ⇒ 位移系数越大
-  assert.ok(levels.displacementFactorOf(100) > levels.displacementFactorOf(1));
-});
-
-test('硬上限：闯关模式超时且未耗尽生命时按位移判定收官（§2.3 / §6.3）', () => {
+test('固定时长：闯关模式达到 45 秒时按能量进度收官', () => {
   const rand = createRng(303);
   let m = beginPlaying(createMatch({ mode: 'level', level: 1 }));
   m = nextRound(m, rand);
   m = submit(m, curTarget(m), GAME_HARD_LIMIT_MS, rand); // 用超大 dt 直接触发倒计时归零
   assert.equal(m.phase, 'over');
-  assert.ok(['win', 'lose', 'draw'].includes(m.result));
+  assert.ok(['win', 'lose'].includes(m.result));
+  assert.equal(m.elapsedMs, GAME_HARD_LIMIT_MS);
   assert.equal(m.livesLeft, LEVEL_LIVES, '命中不扣命');
 });
 

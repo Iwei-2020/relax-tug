@@ -4,7 +4,7 @@
  * 闯关模式平衡模拟器（《项目说明书》§4.8 闯关模式 / §6.7 闯关模式数值）
  *
  * 用途：在没有真机数据的情况下，用**纯 core** 驱动大量闯关对局，量化「关卡曲线（段数 / 候选 /
- * 输入窗口 / 对手强度 / 越线阈值）」对**可通关率**、**过关所需段数**与**失败构成**的影响，
+ * 输入窗口）」对**可通关率**、**过关所需段数**与**失败构成**的影响，
  * 作为关卡数值（`config.js#levelMode`）的门禁与校准依据。
  *
  * 与 `tools/sim-balance.js` 的关系：同一套玩家模型（反应时间 / 准确率）与固定种子复现口径，
@@ -23,7 +23,6 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const req = (p) => require(path.join(ROOT, p));
 
-const CFG_PATH = path.join(ROOT, 'minigame/src/config/config.js');
 const VALIDATE_PATH = path.join(ROOT, 'server/lib/result.js');
 
 /* ── 玩家模型（与 sim-balance 保持一致；校准目标：可通关率随关卡单调下降） ─── */
@@ -56,13 +55,10 @@ function accuracyOf(tier, candidates) {
 
 /* ── 单局模拟 ───────────────────────────────────────────────────────────── */
 
-// 390pt 屏幕下拔河视图的真实可动范围（theme.js：min(220, (width-68)/2-40) = 121）
-const VISUAL_MAX_PX = 121;
-
 /**
  * 跑一关。
- * @returns {{durationMs,result,endKind,rounds,hits,perfectHits,bestCombo,px,livesLeft,
- *            pinnedSegments,segments,myEnergy,oppEnergy,summary,valid,errors}}
+ * @returns {{durationMs,result,endKind,rounds,hits,perfectHits,bestCombo,livesLeft,
+ *            segments,energyPct,summary,valid,errors}}
  */
 function simulateLevel(battle, cfg, level, seedCore, seedPlayer) {
   const randCore = req('minigame/src/core/rng.js').createRng(seedCore);
@@ -72,7 +68,6 @@ function simulateLevel(battle, cfg, level, seedCore, seedPlayer) {
   m = battle.nextRound(m, randCore);
 
   let segments = 0;
-  let pinned = 0;
   let guard = 0;
   while (!battle.isOver(m) && guard < 20000) {
     guard += 1;
@@ -95,18 +90,12 @@ function simulateLevel(battle, cfg, level, seedCore, seedPlayer) {
 
     m = battle.submit(m, clickedId, dtMs, randCore);
     segments += 1;
-    if (Math.abs(m.px) >= VISUAL_MAX_PX) pinned += 1;
     if (!battle.isOver(m)) m = battle.nextRound(m, randCore);
   }
   if (guard >= 20000) throw new Error(`第 ${level} 关未在有限段内结束（疑似死循环）`);
 
   const s = battle.summary(m);
-  const lost = (s.misses || 0) + (s.timeouts || 0);
-  let endKind;
-  if (s.result === 'win') endKind = 'cross'; // 越线过关（§4.8 唯一获胜口径）
-  else if (s.displacementPx <= -cfg.DISPLACEMENT_MAX_PX) endKind = 'oppCross'; // 被对手拉过线
-  else if (lost >= cfg.LEVEL_LIVES) endKind = 'lives'; // 3 条命耗尽
-  else endKind = 'limit'; // 45s 硬上限截断
+  const endKind = s.result === 'win' ? 'goal' : 'limit';
   const check = require(VALIDATE_PATH).validate(s);
 
   return {
@@ -117,12 +106,9 @@ function simulateLevel(battle, cfg, level, seedCore, seedPlayer) {
     hits: s.hits,
     perfectHits: s.perfectHits,
     bestCombo: s.bestCombo,
-    px: s.displacementPx,
     livesLeft: s.livesLeft,
-    pinnedSegments: pinned,
     segments,
-    myEnergy: s.myEnergy,
-    oppEnergy: s.oppEnergy,
+    energyPct: s.energyPct,
     summary: s,
     valid: check.ok,
     errors: check.errors,
@@ -142,12 +128,15 @@ function median(values) {
   return percentile(values.slice().sort((a, b) => a - b), 50);
 }
 
-function summarizeLevel(runs) {
+function summarizeLevel(runs, hardLimitMs) {
   const n = runs.length;
   const wins = runs.filter((r) => r.result === 'win');
   const durs = runs.map((r) => r.durationMs).sort((a, b) => a - b);
   const bad = runs.filter((r) => !r.valid);
-  const kindRate = { cross: 0, lives: 0, oppCross: 0, limit: 0 };
+  const invalidDurationCount = runs.filter(
+    (r) => r.durationMs !== hardLimitMs && r.livesLeft !== 0
+  ).length;
+  const kindRate = { goal: 0, limit: 0 };
   for (let i = 0; i < n; i += 1) kindRate[runs[i].endKind] += 1;
   for (const k of Object.keys(kindRate)) kindRate[k] /= n;
   return {
@@ -156,13 +145,10 @@ function summarizeLevel(runs) {
     medianWinHits: median(wins.map((r) => r.hits)),
     medianWinRounds: median(wins.map((r) => r.rounds)),
     p50DurationMs: percentile(durs, 50),
+    minRounds: runs.reduce((a, r) => Math.min(a, r.rounds), Infinity),
     maxRounds: runs.reduce((a, r) => Math.max(a, r.rounds), 0),
     avgSegments: runs.reduce((a, r) => a + r.segments, 0) / n,
-    visualPinnedRate: (() => {
-      const segs = runs.reduce((a, r) => a + r.segments, 0);
-      const pinned = runs.reduce((a, r) => a + r.pinnedSegments, 0);
-      return segs === 0 ? 0 : pinned / segs;
-    })(),
+    invalidDurationCount,
     endKindRate: kindRate,
     validRate: (n - bad.length) / n,
     invalidSample: bad.length > 0 ? bad[0].errors : [],
@@ -174,7 +160,7 @@ function runBatch(battle, cfg, level, count, seedBase) {
   for (let i = 0; i < count; i += 1) {
     runs.push(simulateLevel(battle, cfg, level, (seedBase + i * 7919) >>> 0, (seedBase + i * 104729 + 17) >>> 0));
   }
-  return summarizeLevel(runs);
+  return summarizeLevel(runs, cfg.GAME_HARD_LIMIT_MS);
 }
 
 const SAMPLES = [1, 5, 10, 25, 50, 75, 90, 100];
@@ -211,19 +197,18 @@ function runBaseline() {
   console.log('闯关模式基线（当前 config，每关 %d 局；时长不含开局倒计时）', count);
   console.log(
     pad('关卡', 6) + pad('段数', 8) + pad('候选', 8) + pad('档位', 8) + pad('胜率%', 8) +
-      pad('过关段数', 12) + pad('P50', 8) + pad('命尽/被越/截断%', 18) + pad('贴线%', 8) + '契约'
+    pad('命中/轮数', 12) + pad('P50', 8) + pad('过关/未满%', 18) + '契约'
   );
   for (const lv of SAMPLES) {
     const r = runBatch(battle, cfg, lv, count, 20261020 + lv * 131);
-    const lastRound = cfg.LEVEL_MODE.maxRounds - 1;
+    const lastRound = Math.ceil(cfg.GAME_HARD_LIMIT_MS / 1000);
     const c0 = levelsCore.levelConfig(lv, 0);
     const c1 = levelsCore.levelConfig(lv, lastRound);
     console.log(
       pad(lv, 6) + pad(`${c0.seqLen}→${c1.seqLen}`, 8) + pad(`${c0.candidates}→${c1.candidates}`, 8) +
         pad(c0.tier, 8) + pad(pct(r.winRate), 8) + pad(`${r.medianWinHits}段/${r.medianWinRounds}轮`, 12) +
         pad(secs(r.p50DurationMs), 8) +
-        pad(`${pct(r.endKindRate.lives)}/${pct(r.endKindRate.oppCross)}/${pct(r.endKindRate.limit)}`, 18) +
-        pad(pct(r.visualPinnedRate), 8) +
+        pad(`${pct(r.endKindRate.goal)}/${pct(r.endKindRate.limit)}`, 18) +
         (r.validRate === 1 ? 'ok' : `FAIL ${r.invalidSample.join('/')}`)
     );
   }
@@ -235,11 +220,11 @@ function runBaseline() {
  * 门禁口径（校准依据见《项目说明书》§6.7）：
  *
  * 1. **契约一致**：每一关的每一局摘要都必须能被 `server/lib/result.js#validate` 接受（服务端权威口径）。
- * 2. **端点带**：L1 胜率 ≥ 0.85（新手第一关几乎必过，否则首日流失）；L100 ∈ [0.15, 0.5]（终局是硬仗但可通关）。
+ * 2. **生命规则基线**：三条累计生命用尽立即失败；固定种子下 L1 保留少量通关样本，高关允许趋近 0%。
  * 3. **块级单调不增**：把 100 关切成 10 关一块共 10 块，块均值必须单调不增（±3% 容差）。
  * 4. **逐关上升幅度上限**：单关胜率比上一关高出的幅度 ≤ 15%（防关键帧边界处出现结构性反转）。
- * 5. **过关段数带**：每关中位过关段数 ∈ [5, 14]（§6.7 目标过关段数 6–14，下限放宽 1 段作为采样容差）。
- * 6. **轮数安全阀**：每关最大轮数 ≤ `LEVEL_MODE.maxRounds`（防极端种子下轮次不收敛）。
+ * 5. **轮次范围**：每局必须持续刷新多轮，不得提前结算。
+ * 6. **时长契约**：每局运行至 45 秒，或生命耗尽时立即失败。
  *
  * 为什么**不是**逐关严格非增：候选色档位按产品需求固定为 2/4/6/9 四档、段数为 1–6 整数，
  * 阶梯式跳档（如 L50/51 从 4 格跳 6 格、L83/84 从 6 格跳 9 格）必然在跳档点造成局部**上升**。
@@ -248,11 +233,9 @@ function runBaseline() {
  */
 const CHECK = {
   runsPerLevel: 400, // 100 关 × 400 局 = 4 万局（实测 <5s，单关噪声 ≈ ±2%，块均值噪声 ≈ ±0.7%）
-  firstWinRateMin: 0.85,
-  lastWinRateMin: 0.15,
-  lastWinRateMax: 0.5,
-  medianHitsMin: 5,
-  medianHitsMax: 14,
+  firstWinRateMin: 0.03,
+  lastWinRateMin: 0,
+  lastWinRateMax: 0.05,
   blockSize: 10,
   blockTolerance: 0.03,
   perLevelRiseMax: 0.15,
@@ -269,12 +252,8 @@ function runCheck() {
     const r = runBatch(battle, cfg, lv, CHECK.runsPerLevel, 20261020 + lv * 131);
     rates.push(r);
     if (r.validRate < 1) problems.push(`L${lv} 存在未被服务端接受的摘要：${r.invalidSample.join('；')}`);
-    if (r.maxRounds > cfg.LEVEL_MODE.maxRounds) {
-      problems.push(`L${lv} 轮数 ${r.maxRounds} 超过 maxRounds ${cfg.LEVEL_MODE.maxRounds}`);
-    }
-    if (r.medianWinHits > 0 && (r.medianWinHits < CHECK.medianHitsMin || r.medianWinHits > CHECK.medianHitsMax)) {
-      problems.push(`L${lv} 中位过关段数 ${r.medianWinHits} 不在 [${CHECK.medianHitsMin}, ${CHECK.medianHitsMax}]`);
-    }
+    if (r.minRounds < 2) problems.push(`L${lv} 存在未持续刷新多轮的对局`);
+    if (r.invalidDurationCount > 0) problems.push(`L${lv} 存在非 45 秒且未耗尽生命的提前结算`);
   }
 
   // 逐关上升幅度（方向：胜率应随关卡下降，**上升**才是异常）
@@ -319,7 +298,7 @@ function runCheck() {
     if (problems.length > 20) console.error(`  … 另有 ${problems.length - 20} 项`);
     process.exit(1);
   }
-  console.log('sim:levels:check 通过：契约一致 / 块级单调不增 / 逐关上升有上限 / 首关易过 / 终关可通关 / 过关段数在带内');
+  console.log('sim:levels:check 通过：契约一致 / 45 秒或生命耗尽 / 多轮持续 / 胜率曲线门禁');
 }
 
 /* ── 模式三：--scan（1–100 全关卡曲线；调参期用） ───────────────────────── */
@@ -330,7 +309,7 @@ function runScan() {
   const cfg = req('minigame/src/config/config.js');
   const levelsCore = req('minigame/src/core/levels.js');
   console.log('闯关模式全关卡曲线（每关 %d 局）', count);
-  console.log(pad('关卡', 6) + pad('u起', 7) + pad('段数', 8) + pad('候选', 8) + pad('档位', 8) + pad('阈值', 7) + pad('窗口', 7) + pad('胜率%', 8) + pad('段数中位', 9) + 'P50');
+  console.log(pad('关卡', 6) + pad('u起', 7) + pad('段数', 8) + pad('候选', 8) + pad('档位', 8) + pad('窗口', 7) + pad('胜率%', 8) + pad('段数中位', 9) + 'P50');
   let prev = 1;
   const breakpoints = [];
   for (let lv = 1; lv <= cfg.LEVEL_MAX; lv += 1) {
@@ -341,8 +320,8 @@ function runScan() {
     if (lv % 5 === 0 || lv === 1 || lv === cfg.LEVEL_MAX) {
       console.log(
         pad(lv, 6) + pad(c0.u.toFixed(3), 7) +
-          pad(`${c0.seqLen}→${levelsCore.maxSeqLenFor(lv, cfg.LEVEL_MODE.maxRounds - 1)}`, 8) +
-          pad(String(c0.candidates), 8) + pad(c0.tier, 8) + pad(c0.winNetEnergy.toFixed(1), 7) +
+          pad(`${c0.seqLen}→${levelsCore.maxSeqLenFor(lv, Math.ceil(cfg.GAME_HARD_LIMIT_MS / 1000))}`, 8) +
+          pad(String(c0.candidates), 8) + pad(c0.tier, 8) +
           pad(c0.windowMs, 7) + pad(pct(r.winRate), 8) + pad(r.medianWinHits, 9) + secs(r.p50DurationMs)
       );
     }

@@ -198,15 +198,10 @@ module.exports = {
     "chestCoins": 100
   },
   "LEVEL_MODE": {
-    "enabled": true,
     "maxLevel": 100,
     "lives": 3,
-    "maxRounds": 60,
-    "winNetEnergy": {
-      "from": 112,
-      "to": 74
-    },
-    "oppHitScale": 0.35,
+    "energyMax": 100,
+    "energyScale": 0.13,
     "keyframes": [
       {
         "at": 0,
@@ -242,10 +237,7 @@ module.exports = {
       9
     ],
     "candidateFrom": 0,
-    "candidateTo": 1,
-    "sanity": {
-      "minWinNetEnergy": 40
-    }
+    "candidateTo": 1
   },
   "LEVEL_MAX": 100,
   "LEVEL_LIVES": 3,
@@ -420,13 +412,12 @@ module.exports = { OPENID_HEADERS, headerOf, openidFromContext };
  * 本文件与客户端版本**逐字对应**，唯一差异是数值来源（服务端走 `./constants.js` 镜像）。
  *
  * 设计口径：
- *   · 100 关不手配：把 4 档难度当**关键帧**，按 u = (L−1)/(max−1) 连续插值（keyframeParams）；
- *   · 关内爬坡：同一关内随轮次从「本关入门档」爬到「本关上限档」（roundRamp）；
- *   · 「越线 = 位移达 ±displacementMaxPx」定义不变，只换「能量 → 像素」比例（winNetEnergyOf）；
+ *   · 100 关不手配：用难度关键帧插值输入窗口时长，段数与候选随关卡和轮次爬坡；
+ *   · 闯关胜负独立于对战，单边能量达到 100% 即满足过关条件；
  *   · 硬约束：每轮候选数 ≥ 该轮段数（levelConfig 内部兜底，不可省）。
  */
 
-const { LEVEL_MODE, DIFFICULTY, DISPLACEMENT_MAX_PX } = __req('server/lib/constants.js');
+const { LEVEL_MODE, DIFFICULTY } = __req('server/lib/constants.js');
 
 /** 夹到 [0, 1]（非有限值一律 0）。 */
 function clamp01(x) {
@@ -480,7 +471,7 @@ function tierAt(u) {
   return picked;
 }
 
-/** 关键帧线性插值：返回 `{ windowMs, oppHit, oppMiss, tier }`（tier 见 tierAt）。 */
+/** 关键帧线性插值：返回 `{ windowMs, tier }`（tier 见 tierAt）。 */
 function keyframeParams(u) {
   const kfs = LEVEL_MODE.keyframes;
   const t = clamp01(u);
@@ -499,15 +490,8 @@ function keyframeParams(u) {
   const lerp = (x, y) => x + (y - x) * k;
   return {
     windowMs: Math.round(lerp(a.windowMs, b.windowMs)),
-    oppHit: lerp(a.oppHit, b.oppHit),
-    oppMiss: lerp(a.oppMiss, b.oppMiss),
     tier: tierAt(t),
   };
-}
-
-/** 陪练弱化（§6.7）：插值出的 oppHit 再乘 `oppHitScale`，夹到 [0, 1]。 */
-function widen(oppHit) {
-  return clamp01(oppHit * LEVEL_MODE.oppHitScale);
 }
 
 /** 关卡内强度区间 `{ entry, cap }`：`entry = (L−1)/(max−1)`，`cap = min(1, entry + span)`。 */
@@ -557,27 +541,9 @@ function snapUp(seqLen) {
 }
 
 /**
- * 越线阈值（§6.7）：`winNetEnergy` 随关卡 `from → to` 线性插值，夹在 `sanity.minWinNetEnergy` 之上。
- * **仅与关卡有关**（不随局内轮次变化）→ 服务端可按 level 单值重算。
- */
-function winNetEnergyOf(level) {
-  const w = LEVEL_MODE.winNetEnergy;
-  const m = LEVEL_MODE.maxLevel;
-  const L = clampLevel(level);
-  const k = m <= 1 ? 0 : (L - 1) / (m - 1);
-  const v = w.from + (w.to - w.from) * k;
-  return Math.max(LEVEL_MODE.sanity.minWinNetEnergy, v);
-}
-
-/** 位移系数（§2.4）：`displacementMaxPx / winNetEnergyOf(level)`。 */
-function displacementFactorOf(level) {
-  return DISPLACEMENT_MAX_PX / winNetEnergyOf(level);
-}
-
-/**
  * 单关单轮的完整派生参数（含硬约束兜底）。
  * @returns {{level:number, roundIndex:number, u:number, seqLen:number, candidates:number,
- *   windowMs:number, oppHit:number, oppMiss:number, tier:string, winNetEnergy:number, displacementFactor:number}}
+ *   windowMs:number, tier:string}}
  */
 function levelConfig(level, roundIndex) {
   const L = clampLevel(level);
@@ -587,7 +553,6 @@ function levelConfig(level, roundIndex) {
   const seqLen = seqLenAt(u);
   let candidates = candidatesAt(u);
   if (candidates < seqLen) candidates = snapUp(seqLen); // 硬约束：候选 ≥ 段数（不可省）
-  const winNetEnergy = winNetEnergyOf(L);
   return {
     level: L,
     roundIndex: ri,
@@ -595,11 +560,7 @@ function levelConfig(level, roundIndex) {
     seqLen,
     candidates,
     windowMs: kf.windowMs,
-    oppHit: widen(kf.oppHit),
-    oppMiss: kf.oppMiss,
     tier: kf.tier,
-    winNetEnergy,
-    displacementFactor: DISPLACEMENT_MAX_PX / winNetEnergy,
   };
 }
 
@@ -658,14 +619,11 @@ module.exports = {
   clampLevel,
   tierAt,
   keyframeParams,
-  widen,
   levelBand,
   levelIntensity,
   seqLenAt,
   candidatesAt,
   snapUp,
-  winNetEnergyOf,
-  displacementFactorOf,
   levelConfig,
   maxSeqLenFor,
   maxSeqCapFor,
@@ -834,13 +792,13 @@ const {
   SEQUENCE_LENGTH,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
-  DRAW_BAND_PX,
   GAME_HARD_LIMIT_MS,
   DIFFICULTY,
   EVENT_MAX_ENERGY_SCALE,
   EVENT_MAX_PER_MATCH,
   LEVEL_MAX,
   LEVEL_LIVES,
+  LEVEL_MODE,
   MONETIZATION,
 } = __req('server/lib/constants.js');
 const { CODES, ok, fail } = __req('server/lib/envelope.js');
@@ -897,8 +855,35 @@ function validate(payload) {
   if (!isInt(p.timeouts) || p.timeouts < 0) errors.push('timeouts 非法');
   if (!isInt(p.bestCombo) || p.bestCombo < 0) errors.push('bestCombo 非法');
   if (isInt(p.bestCombo) && isInt(p.hits) && p.bestCombo > p.hits) errors.push('bestCombo 超过 hits');
-  if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
-  if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
+  if (isLevel) {
+    if (!isInt(p.energyPct) || p.energyPct < 0 || p.energyPct > LEVEL_MODE.energyMax) errors.push('energyPct 非法');
+    else if (
+      isInt(p.hits) &&
+      p.energyPct >
+        Math.min(
+          LEVEL_MODE.energyMax,
+          p.hits *
+            Math.round(
+              Math.round(
+                Math.round((HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER) * EVENT_MAX_ENERGY_SCALE
+              ) * LEVEL_MODE.energyScale
+            )
+        )
+    ) {
+      errors.push('energyPct 超过理论上限');
+    }
+    if (
+      p.myEnergy !== undefined ||
+      p.oppEnergy !== undefined ||
+      p.netEnergy !== undefined ||
+      p.displacementPx !== undefined
+    ) {
+      errors.push('闯关摘要包含对战字段');
+    }
+  } else {
+    if (!isInt(p.myEnergy) || p.myEnergy < 0) errors.push('myEnergy 非法');
+    if (!isInt(p.oppEnergy) || p.oppEnergy < 0) errors.push('oppEnergy 非法');
+  }
   if (!isInt(p.durationMs) || p.durationMs < 0 || p.durationMs > GAME_HARD_LIMIT_MS + DURATION_SLACK_MS) {
     errors.push('durationMs 非法');
   }
@@ -920,6 +905,13 @@ function validate(payload) {
   if (isLevel) {
     if (!validLevel(p.level)) errors.push('level 非法');
     if (!isInt(p.livesLeft) || p.livesLeft < 0 || p.livesLeft > LEVEL_LIVES) errors.push('livesLeft 非法');
+    if (
+      isInt(p.durationMs) &&
+      p.durationMs !== GAME_HARD_LIMIT_MS &&
+      !(p.result === 'lose' && p.livesLeft === 0)
+    ) {
+      errors.push('闯关时长必须为 45 秒，生命耗尽失败除外');
+    }
     if (validLevel(p.level) && DIFFICULTY[p.difficulty] !== undefined) {
       if (p.difficulty !== levels.levelConfig(p.level, 0).tier) errors.push('difficulty 与关卡入门档不一致');
     }
@@ -928,6 +920,7 @@ function validate(payload) {
   // 能量上限：每次命中最高 +（基础 + 最高连击加成），完美判定（§6.2）再乘倍率，
   // 随机事件「手速狂潮」（§6.5）能量倍率再乘一次 —— 三档倍率都必须计入，否则合法上报会被误判为篡改。
   if (
+    !isLevel &&
     isInt(p.hits) &&
     isInt(p.myEnergy) &&
     p.myEnergy > p.hits * (HIT_ENERGY + COMBO_BONUS_MAX) * PERFECT_MULTIPLIER * EVENT_MAX_ENERGY_SCALE
@@ -935,11 +928,9 @@ function validate(payload) {
     errors.push('myEnergy 超过理论上限');
   }
 
-  // 位移必须与「双方能量差」严格一致（公式见说明书 §2.4）。
-  // 闯关模式用**按关卡派生的位移系数**（越线阈值 112→74，§6.7）；普通对战用全局系数。
-  if (isInt(p.myEnergy) && isInt(p.oppEnergy)) {
-    const factor = isLevel && validLevel(p.level) ? levels.displacementFactorOf(p.level) : DISPLACEMENT_FACTOR;
-    const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * factor);
+  // 普通对战位移必须与双方能量差一致；闯关只使用单边百分比进度。
+  if (!isLevel && isInt(p.myEnergy) && isInt(p.oppEnergy)) {
+    const expectedPx = clampPx((p.myEnergy - p.oppEnergy) * DISPLACEMENT_FACTOR);
     if (p.displacementPx !== expectedPx) errors.push('位移与能量不一致');
   }
 
@@ -958,16 +949,19 @@ function validate(payload) {
     else if (p.hits < clean || p.hits > hitsMax) errors.push('hits 与轮次/序列长度不一致');
   }
 
-  // 闯关模式收官一致性（§2.3 / §4.8 优先级：越线 > 对方越线 > 生命耗尽 > 硬上限）：
-  // 服务端不信任 `endKind`，只用「位移 + 剩余生命」两条可观测量推出**必然成立**的恒等式。
-  if (isLevel && RESULTS.includes(p.result) && typeof p.displacementPx === 'number') {
-    const px = p.displacementPx;
-    if (px >= DISPLACEMENT_MAX_PX && p.result !== 'win') errors.push('已越线却未判胜');
-    if (px <= -DISPLACEMENT_MAX_PX && p.result !== 'lose') errors.push('已被越线却未判负');
-    if (isInt(p.livesLeft) && p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
-    if (p.result === 'win' && !(px > 0)) errors.push('判胜但位移未偏向我方');
-    if (p.result === 'lose' && !(px < 0 || p.livesLeft === 0)) errors.push('判负但位移偏向我方且生命未耗尽');
-    if (p.result === 'draw' && Math.abs(px) > DRAW_BAND_PX) errors.push('判平局但位移超出平局带宽');
+  // 闯关只按单边 0–100% 能量校验胜负；时长必须恰为 45 秒。
+  if (isLevel && RESULTS.includes(p.result)) {
+    if (p.result === 'draw') errors.push('闯关模式不支持平局');
+    if (p.result === 'win') {
+      if (p.energyPct !== LEVEL_MODE.energyMax) errors.push('能量未满却判胜');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS) errors.push('闯关胜利必须持续 45 秒');
+      if (p.livesLeft === 0) errors.push('生命耗尽却判胜');
+    }
+    if (p.result === 'lose') {
+      if (p.energyPct === LEVEL_MODE.energyMax && p.livesLeft !== 0) errors.push('能量已满却判负');
+      if (p.durationMs !== GAME_HARD_LIMIT_MS && p.livesLeft !== 0) errors.push('未到 45 秒且生命未耗尽却判负');
+    }
+    if (p.livesLeft === 0 && p.result !== 'lose') errors.push('生命耗尽却未判负');
   }
 
   return { ok: errors.length === 0, errors };
@@ -1051,10 +1045,14 @@ async function recordResult(store, openid, payload, nowMs) {
     timeouts: payload.timeouts,
     bestCombo: payload.bestCombo,
     accuracy: payload.accuracy,
-    myEnergy: payload.myEnergy,
-    oppEnergy: payload.oppEnergy,
-    netEnergy: payload.netEnergy,
-    displacementPx: payload.displacementPx,
+    ...(isLevel
+      ? { energyPct: payload.energyPct }
+      : {
+          myEnergy: payload.myEnergy,
+          oppEnergy: payload.oppEnergy,
+          netEnergy: payload.netEnergy,
+          displacementPx: payload.displacementPx,
+        }),
     awardExp: award.exp, // 本局实发经验 / 金币（§4.6，已计入每日封顶后的结果）
     awardCoins: award.coins,
     createdAt: nowMs,

@@ -142,20 +142,16 @@ const CONFIG = {
     chestCoins: 100, // 全部任务达成后可领的每日宝箱
   },
 
-  /* ── §4.8 / §6.7 闯关模式（1-100 关，V1.1 本波） ─────────────────── */
-  // 100 关**不为每关手配数值**：把 §6.4 的 4 档难度当作**关键帧**，在关卡之间连续插值（见 core/levels.js）。
+  /* ── §4.8 闯关模式（1-100 关） ─────────────────────────────────── */
+  // 100 关不为每关手配数值：用难度档关键帧插值窗口时长，段数与候选随关卡 / 局内轮次爬坡。
   // 「局内进度」= 同一关内随轮次从「本关入门档」爬到「本关上限档」（roundRamp）。
-  // 两个**闯关专用旋钮**（普通对战数值不变）：
-  //   · winNetEnergy 随关卡 112 → 74：叠加「3 条生命」后容错极低，阈值恒 160 会导致中高关**数学上不可通关**；
-  //   · oppHitScale = 0.35：关键帧插值出的 oppHit 再打折，让对手退化为「陪练」而非抢线的对手。
+  // 闯关胜负独立于对战：单边能量 0–100%，对局固定持续 45 秒后结算。
   // 硬约束：每轮候选数 ≥ 该轮段数（由 core/levels.js#levelConfig 内部兜底）。
   levelMode: {
-    enabled: true,
     maxLevel: 100, // 1–100 关
-    lives: 3, // 点错目标色 / 某段超时各扣 1 条；3 条耗尽 = 闯关失败
-    maxRounds: 60, // 安全阀：防极端情况下轮次不收敛（正常由 45s 硬上限兜底）
-    winNetEnergy: { from: 112, to: 74 }, // 只与关卡有关 → 服务端可按 level 单值重算（校验用）
-    oppHitScale: 0.35, // 陪练 AI：插值出的 oppHit 再乘它，夹到 [0, 1]
+    lives: 3, // 点错目标色 / 某段超时各扣 1；归零后仍继续游戏至 45 秒
+    energyMax: 100, // 能量进度达到 100% 即过关
+    energyScale: 0.13, // 缩小单次能量变化，让进度由更多轮次逐步累积
     keyframes: [ // t ∈ [0,1]，按 at 升序且首尾为 0 / 1；tier 指向 difficulty 档
       { at: 0, tier: 'easy' },
       { at: 0.34, tier: 'normal' },
@@ -163,14 +159,12 @@ const CONFIG = {
       { at: 1, tier: 'hell' },
     ],
     roundRamp: { rounds: 8, span: 0.18 }, // 关内爬坡：最迟第 8 轮由「本关入门档」爬到「本关上限档」
-    // 段数 / 候选两条爬坡都**拉满全区间**（to = 1）：曾用 to=0.85 / 0.65 时，L77 之后所有旋钮
-    // 饱和、只剩 winNetEnergy 继续下降 → 难度反而变容易，出现「L74 比 L99 更难」的锯齿。
+    // 段数 / 候选两条爬坡都拉满全区间（to = 1），避免高关卡过早进入参数平台期。
     // 拉满后曲线块均值单调下降（sim:levels 门禁），代价是最难的档位（6 段 / 9 格）推迟到高关才出现。
     seqLen: { min: 1, max: 6, from: 0, to: 1 }, // 段数曲线区间（u 在 [from, to] 内线性映射到 [min, max]）
     candidateTiers: [2, 4, 6, 9], // 候选档位（只允许这些值）
     candidateFrom: 0, // 候选档位推进区间起点（u=0 → 档位 2）
     candidateTo: 1, // 候选档位推进区间终点（u=1 → 档位 9；中点就近取档）
-    sanity: { minWinNetEnergy: 40 }, // 阈值下限，防曲线被调成「一碰就赢」
   },
 
   /* ── §3.2 / §3.3 调色板（9 色；颜色即唯一标识，禁止纯文字标色名） ── */
@@ -210,6 +204,8 @@ const PALETTE_MAX = CONFIG.palette.length;
 /** 闯关模式：关卡上限 / 生命值 / 段数区间 / 候选档位（§4.8 / §6.7）。 */
 const LEVEL_MAX = CONFIG.levelMode.maxLevel;
 const LEVEL_LIVES = CONFIG.levelMode.lives;
+const LEVEL_ENERGY_MAX = CONFIG.levelMode.energyMax;
+const LEVEL_ENERGY_SCALE = CONFIG.levelMode.energyScale;
 const SEQ_LEN_MIN = CONFIG.levelMode.seqLen.min;
 const SEQ_LEN_MAX = CONFIG.levelMode.seqLen.max;
 const CANDIDATE_TIERS = CONFIG.levelMode.candidateTiers;
@@ -252,6 +248,8 @@ module.exports = {
   LEVEL_MODE: CONFIG.levelMode,
   LEVEL_MAX,
   LEVEL_LIVES,
+  LEVEL_ENERGY_MAX,
+  LEVEL_ENERGY_SCALE,
   SEQ_LEN_MIN,
   SEQ_LEN_MAX,
   CANDIDATE_TIERS,

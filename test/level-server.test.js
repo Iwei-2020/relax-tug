@@ -18,7 +18,13 @@ const serverLevels = require('../server/lib/levels.js');
 const { createMemoryStore } = require('../server/lib/store.js');
 const { resetStore } = require('../server/lib/store-provider.js');
 const dailyTasksFn = require('../server/functions/dailyTasks/index.js');
-const { DISPLACEMENT_MAX_PX, DISPLACEMENT_FACTOR, LEVEL_LIVES } = require('../server/lib/constants.js');
+const {
+  DISPLACEMENT_FACTOR,
+  DISPLACEMENT_MAX_PX,
+  LEVEL_LIVES,
+  LEVEL_MODE,
+  GAME_HARD_LIMIT_MS,
+} = require('../server/lib/constants.js');
 
 const CTX = { headers: { 'x-tt-openid': 'u1' } };
 
@@ -27,13 +33,10 @@ function clampPx(v) {
 }
 
 /**
- * 构造一份合法闯关上报（默认「越线过关」）。
- * 我方能量取 `ceil(winNetEnergyOf(level))` ⇒ 位移恰好顶到 +220（越线），与关卡派生的系数一致。
+ * 构造一份合法闯关上报（默认能量满格过关）。
  */
 function levelPayload(level, overrides) {
   const cfg = serverLevels.levelConfig(level, 0);
-  const winNet = serverLevels.winNetEnergyOf(level);
-  const myEnergy = Math.ceil(winNet);
   const o = Object.assign(
     {
       mode: 'level',
@@ -41,30 +44,27 @@ function levelPayload(level, overrides) {
       result: 'win',
       difficulty: cfg.tier,
       livesLeft: LEVEL_LIVES,
-      rounds: 6,
-      hits: 6,
-      perfectHits: 6,
+      rounds: 20,
+      hits: 20,
+      perfectHits: 20,
       misses: 0,
       timeouts: 0,
-      bestCombo: 6,
+      bestCombo: 20,
       accuracy: 1,
-      myEnergy,
-      oppEnergy: 0,
-      durationMs: 20000,
+      energyPct: LEVEL_MODE.energyMax,
+      durationMs: GAME_HARD_LIMIT_MS,
     },
     overrides || {}
   );
-  if (o.displacementPx === undefined) {
-    o.displacementPx = clampPx((o.myEnergy - o.oppEnergy) * serverLevels.displacementFactorOf(level));
-  }
-  o.netEnergy = o.myEnergy - o.oppEnergy;
   return o;
 }
 
-/** 构造一份合法闯关「失败」上报（对方越线，生命未耗尽）。 */
+/** 构造一份合法闯关失败上报（能量未满，45 秒到时）。 */
 function levelLosePayload(level, overrides) {
-  const winNet = serverLevels.winNetEnergyOf(level);
-  return levelPayload(level, Object.assign({ result: 'lose', myEnergy: 0, oppEnergy: Math.ceil(winNet) }, overrides || {}));
+  return levelPayload(
+    level,
+    Object.assign({ result: 'lose', energyPct: 40, durationMs: GAME_HARD_LIMIT_MS }, overrides || {})
+  );
 }
 
 /* ── 1. 合法上报 ───────────────────────────────────────────────── */
@@ -74,12 +74,12 @@ test('validate：合法闯关上报通过（L1 / L25 / L50 / L75 / L100）', () 
     const p = levelPayload(level);
     const r = validate(p);
     assert.equal(r.ok, true, `L${level} 应通过：${r.errors.join('；')}`);
-    assert.equal(p.displacementPx, DISPLACEMENT_MAX_PX, '默认上报恰为越线');
+    assert.equal(p.energyPct, 100, '满能量即过关');
   });
-  // 失败上报（对方越线）同样合法
+  // 失败上报（时限内未充满）同样合法
   const lose = levelLosePayload(40);
   assert.equal(validate(lose).ok, true, validate(lose).errors.join('；'));
-  assert.equal(lose.displacementPx, -DISPLACEMENT_MAX_PX);
+  assert.equal(lose.energyPct, 40);
 });
 
 test('validate：历史 classic 上报（不带 mode）仍按普通对战口径通过', () => {
@@ -123,19 +123,16 @@ test('validate：拒绝难度与关卡入门档不一致（防伪造档位）', 
   assert.equal(serverLevels.levelConfig(1, 0).tier, 'easy');
 });
 
-test('validate：拒绝用普通对战系数算出的位移（闯关须按关卡派生系数）', () => {
-  // 取小的能量差，避免 ±220 夹紧把两种系数「抹平」成同一结果
-  const level = 60;
-  const p = levelPayload(level, { myEnergy: 20, oppEnergy: 0 });
-  const correctPx = clampPx(20 * serverLevels.displacementFactorOf(level));
-  const wrongPx = clampPx(20 * DISPLACEMENT_FACTOR);
-  assert.notEqual(correctPx, wrongPx, '两种系数在该能量差下应给出不同位移（用例前提）');
-  p.displacementPx = wrongPx; // 用了普通对战系数
-  assert.match(validate(p).errors.join(), /位移与能量不一致/);
-  // 换成正确系数即通过
-  p.displacementPx = correctPx;
-  const r = validate(p);
-  assert.equal(r.ok, true, r.errors.join('；'));
+test('validate：闯关拒绝非法百分比与对战方字段', () => {
+  assert.match(validate(levelPayload(60, { energyPct: 101 })).errors.join(), /energyPct 非法/);
+  assert.match(validate(levelPayload(60, { myEnergy: 100 })).errors.join(), /闯关摘要包含对战字段/);
+  assert.match(validate(levelPayload(60, { oppEnergy: 0 })).errors.join(), /闯关摘要包含对战字段/);
+  assert.match(validate(levelPayload(60, { displacementPx: 220 })).errors.join(), /闯关摘要包含对战字段/);
+  assert.match(validate(levelPayload(60, { durationMs: 44999 })).errors.join(), /闯关时长必须为 45 秒/);
+  assert.match(
+    validate(levelPayload(60, { result: 'lose', livesLeft: 1, energyPct: 40, durationMs: 44999 })).errors.join(),
+    /闯关时长必须为 45 秒/
+  );
 });
 
 test('validate：拒绝超过「关卡 + 轮次」派生的段数上界', () => {
@@ -143,34 +140,30 @@ test('validate：拒绝超过「关卡 + 轮次」派生的段数上界', () => 
   const rounds = 6;
   const cap = serverLevels.maxSeqCapFor(level, rounds);
   assert.equal(serverLevels.maxSeqCapFor(level, rounds), cap);
+  const valid = { result: 'lose', energyPct: 30, livesLeft: 2, rounds, hits: cap, perfectHits: cap, bestCombo: cap };
   // 上界内合法
-  assert.equal(validate(levelPayload(level, { rounds, hits: cap, perfectHits: cap, bestCombo: cap })).ok, true);
+  assert.equal(validate(levelPayload(level, valid)).ok, true);
   // 越界被拒
-  const bad = levelPayload(level, { rounds, hits: cap + 1, perfectHits: cap + 1, bestCombo: cap + 1 });
+  const bad = levelPayload(level, {
+    ...valid,
+    hits: cap + 1,
+    perfectHits: cap + 1,
+    bestCombo: cap + 1,
+  });
   assert.match(validate(bad).errors.join(), /hits 与轮次\/序列长度不一致/);
   // 同一份 hits 在 classic 口径下反而合法（证明上界确实按关卡重算，而非沿用 SEQUENCE_LENGTH）
   assert.equal(rounds * 3 > cap, true, 'L1 前 6 轮的段数上界应低于 3 段/轮的普通口径');
 });
 
-test('validate：拒绝与「位移 + 剩余生命」矛盾的收官结果（§2.3 优先级）', () => {
-  // 生命耗尽却判胜
-  assert.match(
-    validate(levelPayload(30, { livesLeft: 0, result: 'win' })).errors.join(),
-    /生命耗尽却未判负/
-  );
-  // 已越线却判负
-  const p = levelPayload(30, { result: 'lose' });
-  assert.match(validate(p).errors.join(), /已越线却未判胜|判负但位移偏向我方且生命未耗尽/);
-  // 判负但位移偏向我方且生命未耗尽
-  const q = levelPayload(30, { result: 'lose', myEnergy: 100, oppEnergy: 0 });
-  assert.match(validate(q).errors.join(), /判负但位移偏向我方且生命未耗尽/);
-  // 判平局但位移超出平局带宽
-  const d = levelPayload(30, { result: 'draw', myEnergy: 100, oppEnergy: 0 });
-  assert.match(validate(d).errors.join(), /判平局但位移超出平局带宽/);
-  // 合法的「生命耗尽判负」（位移未越线、偏向我方）：应通过
-  const okLose = levelPayload(30, { result: 'lose', livesLeft: 0, myEnergy: 10, oppEnergy: 0 });
-  okLose.displacementPx = clampPx(10 * serverLevels.displacementFactorOf(30));
-  assert.equal(validate(okLose).ok, true, validate(okLose).errors.join('；'));
+test('validate：闯关收官接受 45 秒结果或生命耗尽的提前失败', () => {
+  assert.match(validate(levelPayload(30, { livesLeft: 0, result: 'win' })).errors.join(), /生命耗尽却判胜/);
+  assert.match(validate(levelPayload(30, { result: 'win', energyPct: 99 })).errors.join(), /能量未满却判胜/);
+  assert.match(validate(levelPayload(30, { result: 'lose', energyPct: 100 })).errors.join(), /能量已满却判负/);
+  assert.match(validate(levelPayload(30, { result: 'draw' })).errors.join(), /闯关模式不支持平局/);
+  const lifeOut = levelPayload(30, { result: 'lose', livesLeft: 0, energyPct: 40, durationMs: 12000 });
+  assert.equal(validate(lifeOut).ok, true, validate(lifeOut).errors.join('；'));
+  const timedLose = levelPayload(30, { result: 'lose', livesLeft: 2, energyPct: 40 });
+  assert.equal(validate(timedLose).ok, true, validate(timedLose).errors.join('；'));
 });
 
 /* ── 3. recordResult：权威进度 ─────────────────────────────────── */
@@ -204,10 +197,10 @@ test('recordResult：仅「过关」推进 levels.max，且不可回退（权威
 test('recordResult：非法闯关上报被拒（不写进度、不发奖）', async () => {
   const store = createMemoryStore();
   const now = Date.now();
-  const bad = levelPayload(12, { livesLeft: 0, result: 'win' }); // 生命耗尽却判胜
+  const bad = levelPayload(12, { energyPct: 99, result: 'win' });
   const res = await recordResult(store, 'u1', bad, now);
   assert.notEqual(res.code, 0);
-  assert.match(res.msg, /生命耗尽却未判负/);
+  assert.match(res.msg, /能量未满却判胜/);
   const profile = await store.getProfile('u1');
   assert.equal(profile, null, '被拒的上报不应落库');
 });

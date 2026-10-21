@@ -8,13 +8,12 @@
  * 本文件与客户端版本**逐字对应**，唯一差异是数值来源（服务端走 `./constants.js` 镜像）。
  *
  * 设计口径：
- *   · 100 关不手配：把 4 档难度当**关键帧**，按 u = (L−1)/(max−1) 连续插值（keyframeParams）；
- *   · 关内爬坡：同一关内随轮次从「本关入门档」爬到「本关上限档」（roundRamp）；
- *   · 「越线 = 位移达 ±displacementMaxPx」定义不变，只换「能量 → 像素」比例（winNetEnergyOf）；
+ *   · 100 关不手配：用难度关键帧插值输入窗口时长，段数与候选随关卡和轮次爬坡；
+ *   · 闯关胜负独立于对战，单边能量达到 100% 即满足过关条件；
  *   · 硬约束：每轮候选数 ≥ 该轮段数（levelConfig 内部兜底，不可省）。
  */
 
-const { LEVEL_MODE, DIFFICULTY, DISPLACEMENT_MAX_PX } = require('./constants.js');
+const { LEVEL_MODE, DIFFICULTY } = require('./constants.js');
 
 /** 夹到 [0, 1]（非有限值一律 0）。 */
 function clamp01(x) {
@@ -68,7 +67,7 @@ function tierAt(u) {
   return picked;
 }
 
-/** 关键帧线性插值：返回 `{ windowMs, oppHit, oppMiss, tier }`（tier 见 tierAt）。 */
+/** 关键帧线性插值：返回 `{ windowMs, tier }`（tier 见 tierAt）。 */
 function keyframeParams(u) {
   const kfs = LEVEL_MODE.keyframes;
   const t = clamp01(u);
@@ -87,15 +86,8 @@ function keyframeParams(u) {
   const lerp = (x, y) => x + (y - x) * k;
   return {
     windowMs: Math.round(lerp(a.windowMs, b.windowMs)),
-    oppHit: lerp(a.oppHit, b.oppHit),
-    oppMiss: lerp(a.oppMiss, b.oppMiss),
     tier: tierAt(t),
   };
-}
-
-/** 陪练弱化（§6.7）：插值出的 oppHit 再乘 `oppHitScale`，夹到 [0, 1]。 */
-function widen(oppHit) {
-  return clamp01(oppHit * LEVEL_MODE.oppHitScale);
 }
 
 /** 关卡内强度区间 `{ entry, cap }`：`entry = (L−1)/(max−1)`，`cap = min(1, entry + span)`。 */
@@ -145,27 +137,9 @@ function snapUp(seqLen) {
 }
 
 /**
- * 越线阈值（§6.7）：`winNetEnergy` 随关卡 `from → to` 线性插值，夹在 `sanity.minWinNetEnergy` 之上。
- * **仅与关卡有关**（不随局内轮次变化）→ 服务端可按 level 单值重算。
- */
-function winNetEnergyOf(level) {
-  const w = LEVEL_MODE.winNetEnergy;
-  const m = LEVEL_MODE.maxLevel;
-  const L = clampLevel(level);
-  const k = m <= 1 ? 0 : (L - 1) / (m - 1);
-  const v = w.from + (w.to - w.from) * k;
-  return Math.max(LEVEL_MODE.sanity.minWinNetEnergy, v);
-}
-
-/** 位移系数（§2.4）：`displacementMaxPx / winNetEnergyOf(level)`。 */
-function displacementFactorOf(level) {
-  return DISPLACEMENT_MAX_PX / winNetEnergyOf(level);
-}
-
-/**
  * 单关单轮的完整派生参数（含硬约束兜底）。
  * @returns {{level:number, roundIndex:number, u:number, seqLen:number, candidates:number,
- *   windowMs:number, oppHit:number, oppMiss:number, tier:string, winNetEnergy:number, displacementFactor:number}}
+ *   windowMs:number, tier:string}}
  */
 function levelConfig(level, roundIndex) {
   const L = clampLevel(level);
@@ -175,7 +149,6 @@ function levelConfig(level, roundIndex) {
   const seqLen = seqLenAt(u);
   let candidates = candidatesAt(u);
   if (candidates < seqLen) candidates = snapUp(seqLen); // 硬约束：候选 ≥ 段数（不可省）
-  const winNetEnergy = winNetEnergyOf(L);
   return {
     level: L,
     roundIndex: ri,
@@ -183,11 +156,7 @@ function levelConfig(level, roundIndex) {
     seqLen,
     candidates,
     windowMs: kf.windowMs,
-    oppHit: widen(kf.oppHit),
-    oppMiss: kf.oppMiss,
     tier: kf.tier,
-    winNetEnergy,
-    displacementFactor: DISPLACEMENT_MAX_PX / winNetEnergy,
   };
 }
 
@@ -246,14 +215,11 @@ module.exports = {
   clampLevel,
   tierAt,
   keyframeParams,
-  widen,
   levelBand,
   levelIntensity,
   seqLenAt,
   candidatesAt,
   snapUp,
-  winNetEnergyOf,
-  displacementFactorOf,
   levelConfig,
   maxSeqLenFor,
   maxSeqCapFor,

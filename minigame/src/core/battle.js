@@ -17,6 +17,8 @@ const {
   DIFFICULTY,
   MATCH_TIMEOUT_MS,
   LEVEL_LIVES,
+  LEVEL_ENERGY_MAX,
+  LEVEL_ENERGY_SCALE,
 } = require('../config/config.js');
 const { createEnergyState, applyHit, applyMiss, applyTimeout, displacement, finalResult } = require('./energy.js');
 const { createRound, currentTargetId, judgeGrade } = require('./matcher.js');
@@ -29,8 +31,7 @@ const { clampLevel, levelConfig } = require('./levels.js');
  *
  * 两种模式（§4.8）：
  *   · `classic`（默认）：普通对战，越线阈值恒 160、无生命值 —— 行为与本波改造前逐位一致；
- *   · `level`：闯关模式，按 `level` 派生段数 / 候选 / 窗口 / 对手强度 / 越线阈值，
- *     并带 3 条生命（点错 / 超时各扣 1，耗尽即闯关失败）。
+ *   · `level`：闯关模式，按 `level` 派生段数 / 候选 / 窗口；能量达到 100% 即过关。
  * @param {{difficulty?:string, matchTimeoutMs?:number, challenge?:boolean, mode?:'classic'|'level', level?:number}} [options]
  */
 function createMatch(options) {
@@ -54,13 +55,9 @@ function createMatch(options) {
     roundElapsedMs: 0,
     round: null,
     player: createEnergyState(),
-    ghost: createGhost(
-      difficulty,
-      mode === 'level'
-        ? { oppHit: entryCfg.oppHit, oppMiss: entryCfg.oppMiss, winNetEnergy: entryCfg.winNetEnergy }
-        : undefined
-    ),
+    ghost: mode === 'classic' ? createGhost(difficulty) : null,
     livesLeft: mode === 'level' ? LEVEL_LIVES : null, // 闯关模式剩余生命（§4.8）
+    goalReached: mode === 'level' ? false : null,
     levelCfg: entryCfg, // 闯关模式当前轮参数（classic 为 null）
     events: createEventState(), // §6.5 随机事件状态（种子驱动，附在 match 上便于快照/上报）
     result: null,
@@ -100,30 +97,22 @@ function nextRound(match, rand) {
   const events = maybeTrigger(match.events, match.roundIndex, rand);
   const ev = activeEvent(events);
 
-  // 闯关模式：每轮按「关卡 + 局内轮次」重算参数（段数 / 候选 / 窗口 / 对手强度）——
-  // 这就是需求「目标序列随关卡与局内进度变化」「候选集合随之变化」的落地口径（§6.7）。
+  // 闯关模式：每轮按「关卡 + 局内轮次」重算段数、候选数与输入窗口。
   let difficulty = match.difficulty;
-  let ghost = match.ghost;
   let levelCfg = match.levelCfg;
   let overrides;
   if (match.mode === 'level') {
     levelCfg = levelConfig(match.level, match.roundIndex);
     difficulty = levelCfg.tier;
     overrides = { seqLen: levelCfg.seqLen, candidates: levelCfg.candidates, windowMs: levelCfg.windowMs };
-    ghost = {
-      ...match.ghost,
-      oppHit: levelCfg.oppHit,
-      oppMiss: levelCfg.oppMiss,
-      winNetEnergy: levelCfg.winNetEnergy,
-    };
   }
 
   const round = createRound(difficulty, rand, ev ? ev.windowScale : undefined, overrides);
-  return { ...match, events, ghost, levelCfg, round, roundElapsedMs: 0 };
+  return { ...match, events, levelCfg, round, roundElapsedMs: 0 };
 }
 
 /**
- * 结算一次操作（玩家操作与对手产出在同一段内一并推进，异步实时体感）。
+ * 结算一次操作（普通对战推进 AI；闯关模式只更新玩家能量）。
  *
  * 一次操作 = 结算序列中的**一段**：点对则推进到下一段（本轮继续，窗口由表现层重置），
  * 走完最后一段 / 点错 / 超时则本轮结束（roundIndex +1），随后由表现层停顿并刷新下一轮。
@@ -138,12 +127,15 @@ function nextRound(match, rand) {
 function submit(match, clickedId, dtMs, rand) {
   if (match.phase !== 'playing' || !match.round) return match;
 
+  const segMs = Math.max(0, dtMs || 0);
+  const isLevel = match.mode === 'level';
+  const elapsedMs = isLevel
+    ? Math.min(GAME_HARD_LIMIT_MS, match.elapsedMs + segMs)
+    : match.elapsedMs + segMs;
+
   const targetId = currentTargetId(match.round);
   const seqLength = match.round.targetIds.length;
   const segIndex = match.round.seqIndex;
-
-  const segMs = Math.max(0, dtMs || 0);
-  const elapsedMs = match.elapsedMs + segMs;
 
   // §6.5 随机事件：按真实时间衰减（到期自动失效，恢复常态），并取出本次生效的能量倍率
   const events = tickEvent(match.events, segMs);
@@ -155,39 +147,45 @@ function submit(match, clickedId, dtMs, rand) {
   const grade = timedOut ? 'miss' : judgeGrade(targetId, clickedId, segMs, match.round.windowMs);
   const correct = grade !== 'miss';
   const perfect = grade === 'perfect';
-  const player = timedOut
+  const updatedPlayer = timedOut
     ? applyTimeout(match.player)
     : correct
       ? applyHit(match.player, undefined, perfect, energyScale)
       : applyMiss(match.player);
-
-  // 对手也按「段」推进：与玩家逐段对称，序列化改动才不会打破 §6.4 的能量平衡口径
-  const stepped = stepGhost(match.ghost, player.energy, rand);
-  const ghost = { ...match.ghost, state: stepped.state };
+  const rawDelta = updatedPlayer.energy - match.player.energy;
+  const scaledEnergy = Math.max(
+    0,
+    Math.min(LEVEL_ENERGY_MAX, match.player.energy + Math.round(rawDelta * LEVEL_ENERGY_SCALE))
+  );
+  const goalReached = isLevel && (match.goalReached === true || scaledEnergy >= LEVEL_ENERGY_MAX);
+  const player = isLevel
+    ? {
+        ...updatedPlayer,
+        energy: goalReached ? LEVEL_ENERGY_MAX : scaledEnergy,
+        lastGain: (goalReached ? LEVEL_ENERGY_MAX : scaledEnergy) - match.player.energy,
+      }
+    : updatedPlayer;
+  const stepped = isLevel ? null : stepGhost(match.ghost, player.energy, rand);
+  const ghost = isLevel ? null : { ...match.ghost, state: stepped.state };
 
   // 点错/超时本轮作废，但保留已清段数（UI 用它显示「差几段」）
   const cleared = correct ? segIndex + 1 : segIndex;
   const timeUp = elapsedMs >= GAME_HARD_LIMIT_MS;
 
-  const myEnergy = player.energy;
-  const oppEnergy = ghost.state.energy;
-  // 闯关模式：位移系数按关卡派生（越线阈值 112→74，§6.7）；普通对战保持全局系数（缺省）
-  const isLevel = match.mode === 'level';
-  const factor = isLevel && match.levelCfg ? match.levelCfg.displacementFactor : undefined;
-  const px = displacement(myEnergy, oppEnergy, factor);
-  // 闯关模式：点错 / 超时各扣 1 条生命，3 条耗尽即闯关失败（§4.8；命中不扣）
+  // 闯关模式：点错 / 超时各扣 1 条生命；生命只记录错误次数，不提前结束 45 秒对局。
   const livesLeft = isLevel ? Math.max(0, match.livesLeft - (correct ? 0 : 1)) : match.livesLeft;
-  // 收官优先级（§2.3）：越线 > 对方越线 > 生命耗尽 > 硬上限（倒计时归零）
-  let result;
+  let px = 0;
+  let result = null;
   if (isLevel) {
-    result = finalResult(myEnergy, oppEnergy, false, factor); // 仅「越线」分支（未越线 → null）
-    if (result === null && livesLeft <= 0) result = 'lose';
-    if (result === null && timeUp) result = finalResult(myEnergy, oppEnergy, true, factor);
+    if (livesLeft <= 0) result = 'lose';
+    else if (timeUp) result = goalReached ? 'win' : 'lose';
   } else {
-    result = finalResult(myEnergy, oppEnergy, timeUp);
+    const oppEnergy = ghost.state.energy;
+    px = displacement(player.energy, oppEnergy);
+    result = finalResult(player.energy, oppEnergy, timeUp);
   }
 
-  // 对局一旦收官（越线即时结算 / 生命耗尽 / 硬上限截断）就把本轮一并记为结束：
+  // 对局收官时，把当前轮一并标记结束，避免留下半轮状态。
   // 否则最后那一轮不足 N 段却仍计入「未结束」，会破坏服务端
   // 「hits ≤ 轮次 × 序列长度」的一致性上界，误把合法上报判成篡改（见 server/lib/result.js）。
   const roundDone = !correct || cleared >= seqLength || result !== null;
@@ -198,6 +196,7 @@ function submit(match, clickedId, dtMs, rand) {
     player,
     ghost,
     elapsedMs,
+    goalReached: isLevel ? goalReached : match.goalReached,
     roundIndex: roundDone ? match.roundIndex + 1 : match.roundIndex,
     round: { ...match.round, seqIndex: cleared, done: roundDone },
     roundElapsedMs: 0,
@@ -215,8 +214,7 @@ function submit(match, clickedId, dtMs, rand) {
       segIndex,
       roundDone,
       playerGain: player.lastGain,
-      ghostGain: stepped.gained,
-      ghostHit: stepped.hit,
+      ...(isLevel ? {} : { ghostGain: stepped.gained, ghostHit: stepped.hit }),
       comboAfter: player.combo,
       px,
     },
@@ -245,7 +243,7 @@ function summary(match) {
   const p = match.player;
   const total = p.hits + p.misses + p.timeouts;
   const ev = match.events || {};
-  return {
+  const result = {
     result: match.result,
     mode: match.mode,
     level: match.level,
@@ -260,13 +258,18 @@ function summary(match) {
     timeouts: p.timeouts,
     bestCombo: p.bestCombo,
     accuracy: total === 0 ? 0 : p.hits / total,
-    myEnergy: p.energy,
-    oppEnergy: match.ghost.state.energy,
-    netEnergy: p.energy - match.ghost.state.energy,
-    displacementPx: match.px,
+    ...(match.mode === 'level'
+      ? { energyPct: p.energy }
+      : {
+          myEnergy: p.energy,
+          oppEnergy: match.ghost.state.energy,
+          netEnergy: p.energy - match.ghost.state.energy,
+          displacementPx: match.px,
+        }),
     eventsFired: ev.fired || 0,
     eventIds: ev.firedIds ? ev.firedIds.slice() : [],
   };
+  return result;
 }
 
 module.exports = {
