@@ -27,10 +27,6 @@ function emptyCounter() {
     // ── §4.6 / §6.6 局外成长：当日「对局产出」累计量，用于每日封顶（防刷） ──
     expEarned: 0,
     coinsEarned: 0,
-    // ── §4.7 每日任务：进度 / 已领任务 / 宝箱（与上面共享同一「今天」，跨日整份重建） ──
-    taskProgress: {},
-    taskClaimed: {},
-    chestClaimed: false,
   };
 }
 

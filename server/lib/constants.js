@@ -7,7 +7,7 @@
  * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）
  *
  * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。
- * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）、
+ * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长）、
  * §6.7（闯关模式）与 §5.1（广告频次上限）。PALETTE（配色明细）属客户端专用，不进本镜像
  * （只镜像其派生标量 PALETTE_MAX）。
  */
@@ -129,44 +129,6 @@ module.exports = {
         "minLevel": 45
       }
     ]
-  },
-  "DAILY_TASKS": {
-    "enabled": true,
-    "pool": [
-      {
-        "id": "play3",
-        "name": "完成 3 局对战",
-        "metric": "matches",
-        "mode": "count",
-        "goal": 3,
-        "coins": 40
-      },
-      {
-        "id": "win2",
-        "name": "赢得 2 局",
-        "metric": "wins",
-        "mode": "count",
-        "goal": 2,
-        "coins": 60
-      },
-      {
-        "id": "perfect10",
-        "name": "累计 24 次完美判定",
-        "metric": "perfectHits",
-        "mode": "sum",
-        "goal": 24,
-        "coins": 50
-      },
-      {
-        "id": "combo8",
-        "name": "单局达成 15 连击",
-        "metric": "bestCombo",
-        "mode": "max",
-        "goal": 15,
-        "coins": 40
-      }
-    ],
-    "chestCoins": 100
   },
   "LEVEL_MODE": {
     "maxLevel": 100,

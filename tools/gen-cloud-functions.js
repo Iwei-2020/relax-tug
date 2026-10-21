@@ -167,14 +167,24 @@ function main() {
     label: `${entry.name}.js`,
   }));
   products.push({ file: path.join(OUT_DIR, 'package.json'), content: renderPackageJson(), label: 'package.json' });
+  const activeBundles = new Set(entries.map((entry) => `${entry.name}.js`));
+  const staleBundles = fs.existsSync(OUT_DIR)
+    ? fs.readdirSync(OUT_DIR).filter((name) => name.endsWith('.js') && !activeBundles.has(name))
+    : [];
 
   if (CHECK_ONLY) {
     for (const product of products) checkSame(product.file, product.content, product.label);
+    if (staleBundles.length > 0) {
+      console.error(`[gen-cloud-functions] --check 失败：发现已下线函数产物 ${staleBundles.join('、')}`);
+      console.error('  处置：重新运行 node tools/gen-cloud-functions.js 清理过期产物。');
+      process.exit(1);
+    }
     console.log(`[gen-cloud-functions] --check 通过：${products.length} 个产物与源一致`);
     return;
   }
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
+  for (const name of staleBundles) fs.unlinkSync(path.join(OUT_DIR, name));
   let bytes = 0;
   for (const product of products) {
     fs.writeFileSync(product.file, product.content);

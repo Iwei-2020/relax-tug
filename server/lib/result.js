@@ -31,7 +31,6 @@ const {
 const { CODES, ok, fail } = require('./envelope.js');
 const { emptyCounter } = require('./store.js');
 const { awardWithDailyCaps, applyAward, progressOf } = require('./progression.js');
-const { stateFromCounter, counterFields, applyMatch, summaryOf } = require('./tasks.js');
 const levels = require('./levels.js');
 
 /** 判定结果集合。 */
@@ -238,9 +237,6 @@ async function recordResult(store, openid, payload, nowMs) {
   }
   const levelsProgress = levels.normalizeLevels(profile.levels);
 
-  // §4.7 每日任务：进度累计进当日计数器（与广告频次共享同一 openid:day 文档）
-  const taskState = applyMatch(stateFromCounter(prevCounter, day), payload);
-
   const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
@@ -250,8 +246,10 @@ async function recordResult(store, openid, payload, nowMs) {
     lastMatchAt: nowMs,
     expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
     coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
-    ...counterFields(taskState),
   };
+  delete counter.taskProgress;
+  delete counter.taskClaimed;
+  delete counter.chestClaimed;
 
   await store.saveProfile(profile);
   await store.saveCounters(openid, day, counter);
@@ -293,7 +291,6 @@ async function recordResult(store, openid, payload, nowMs) {
     award, // 本局实发奖励（§4.6）
     progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
     levels: levelsProgress, // 权威闯关进度 `{ max }`（客户端本地乐观 + 此值覆盖，§4.8）
-    tasks: summaryOf(taskState), // 每日任务进度（§4.7）
     daily: {
       match: counter.match,
       win: counter.win,

@@ -1,7 +1,7 @@
 /**
  * 抖音云函数服务产物：reportEvents.js
  *
- * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/levels.js / server/lib/progression.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/lib/tasks.js / server/functions/reportEvents/index.js
+ * **构建期生成，禁止手改**。源：server/lib/constants.js / server/lib/difficulty.js / server/lib/envelope.js / server/lib/identity.js / server/lib/levels.js / server/lib/progression.js / server/lib/result.js / server/lib/store-cloud.js / server/lib/store-provider.js / server/lib/store.js / server/functions/reportEvents/index.js
  * 改完源后重跑 `node tools/gen-cloud-functions.js`（生成脚本：tools/gen-cloud-functions.js）。
  *
  * 平台契约：入口 `module.exports = async function (params, context)`，`params` 即 HTTP 请求体本身，
@@ -36,7 +36,7 @@
  * 生成：node tools/gen-constants.js（校验：node tools/gen-constants.js --check）
  *
  * 变更流程：改客户端 config → 重跑本脚本 → 提交。忘记重跑会被 npm run verify 的 --check 拦截。
- * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长 / 每日任务）、
+ * 字段对应《解压拔河大作战 · 项目说明书》§6（数值规划）、§6.5（随机事件）、§6.6（局外成长）、
  * §6.7（闯关模式）与 §5.1（广告频次上限）。PALETTE（配色明细）属客户端专用，不进本镜像
  * （只镜像其派生标量 PALETTE_MAX）。
  */
@@ -158,44 +158,6 @@ module.exports = {
         "minLevel": 45
       }
     ]
-  },
-  "DAILY_TASKS": {
-    "enabled": true,
-    "pool": [
-      {
-        "id": "play3",
-        "name": "完成 3 局对战",
-        "metric": "matches",
-        "mode": "count",
-        "goal": 3,
-        "coins": 40
-      },
-      {
-        "id": "win2",
-        "name": "赢得 2 局",
-        "metric": "wins",
-        "mode": "count",
-        "goal": 2,
-        "coins": 60
-      },
-      {
-        "id": "perfect10",
-        "name": "累计 24 次完美判定",
-        "metric": "perfectHits",
-        "mode": "sum",
-        "goal": 24,
-        "coins": 50
-      },
-      {
-        "id": "combo8",
-        "name": "单局达成 15 连击",
-        "metric": "bestCombo",
-        "mode": "max",
-        "goal": 15,
-        "coins": 40
-      }
-    ],
-    "chestCoins": 100
   },
   "LEVEL_MODE": {
     "maxLevel": 100,
@@ -804,7 +766,6 @@ const {
 const { CODES, ok, fail } = __req('server/lib/envelope.js');
 const { emptyCounter } = __req('server/lib/store.js');
 const { awardWithDailyCaps, applyAward, progressOf } = __req('server/lib/progression.js');
-const { stateFromCounter, counterFields, applyMatch, summaryOf } = __req('server/lib/tasks.js');
 const levels = __req('server/lib/levels.js');
 
 /** 判定结果集合。 */
@@ -1011,9 +972,6 @@ async function recordResult(store, openid, payload, nowMs) {
   }
   const levelsProgress = levels.normalizeLevels(profile.levels);
 
-  // §4.7 每日任务：进度累计进当日计数器（与广告频次共享同一 openid:day 文档）
-  const taskState = applyMatch(stateFromCounter(prevCounter, day), payload);
-
   const firstWinToday = isWin && !prevCounter.firstWinUsed;
   const counter = {
     ...prevCounter,
@@ -1023,8 +981,10 @@ async function recordResult(store, openid, payload, nowMs) {
     lastMatchAt: nowMs,
     expEarned: Math.max(0, Math.floor(prevCounter.expEarned || 0)) + award.exp, // 当日对局产出，供每日封顶
     coinsEarned: Math.max(0, Math.floor(prevCounter.coinsEarned || 0)) + award.coins,
-    ...counterFields(taskState),
   };
+  delete counter.taskProgress;
+  delete counter.taskClaimed;
+  delete counter.chestClaimed;
 
   await store.saveProfile(profile);
   await store.saveCounters(openid, day, counter);
@@ -1066,7 +1026,6 @@ async function recordResult(store, openid, payload, nowMs) {
     award, // 本局实发奖励（§4.6）
     progress: progressOf(profile), // 权威进度（客户端据此对账，§4.6）
     levels: levelsProgress, // 权威闯关进度 `{ max }`（客户端本地乐观 + 此值覆盖，§4.8）
-    tasks: summaryOf(taskState), // 每日任务进度（§4.7）
     daily: {
       match: counter.match,
       win: counter.win,
@@ -1256,10 +1215,6 @@ function emptyCounter() {
     // ── §4.6 / §6.6 局外成长：当日「对局产出」累计量，用于每日封顶（防刷） ──
     expEarned: 0,
     coinsEarned: 0,
-    // ── §4.7 每日任务：进度 / 已领任务 / 宝箱（与上面共享同一「今天」，跨日整份重建） ──
-    taskProgress: {},
-    taskClaimed: {},
-    chestClaimed: false,
   };
 }
 
@@ -1309,148 +1264,6 @@ function createMemoryStore(seed) {
 }
 
 module.exports = { createMemoryStore, emptyCounter, C_PROFILES, C_RESULTS, C_COUNTERS };
-  };
-
-  // ── server/lib/tasks.js
-  __registry["server/lib/tasks.js"] = function (module, exports, require) {
-'use strict';
-
-/**
- * 服务端每日任务（《项目说明书》§4.7 每日任务与宝箱 + §6.6 数值）
- *
- * 与客户端 `minigame/src/core/tasks.js` **同一套公式、同一份参数**（constants.DAILY_TASKS 镜像），
- * 由 `test/progression.test.js` 交叉校验两端等价。
- *
- * 存储形态：进度与领奖状态**扁平地挂在当日计数器**（`rt_counters` 的 `openid:day` 文档）上，
- * 与广告频次共享同一份「今天」，因此天然满足 §4.7「与每日挑战同一把尺子」的刷新口径。
- * 纯函数一律返回新对象（`store` 读出的对象只是浅拷贝，原地改不会落库）。
- */
-
-const { DAILY_TASKS } = __req('server/lib/constants.js');
-
-/** 本局对某指标的增量（§6.6 metric 定义）。 */
-function metricValue(summary, metric) {
-  const s = summary || {};
-  switch (metric) {
-    case 'matches':
-      return 1;
-    case 'wins':
-      return s.result === 'win' ? 1 : 0;
-    case 'perfectHits':
-      return Math.max(0, Math.floor(s.perfectHits || 0));
-    case 'bestCombo':
-      return Math.max(0, Math.floor(s.bestCombo || 0));
-    default:
-      return 0;
-  }
-}
-
-/** 计数器 → 纯状态（供下列纯函数使用）。 */
-function stateFromCounter(counter, day) {
-  const c = counter || {};
-  return {
-    day: day || '',
-    progress: c.taskProgress && typeof c.taskProgress === 'object' ? { ...c.taskProgress } : {},
-    claimed: c.taskClaimed && typeof c.taskClaimed === 'object' ? { ...c.taskClaimed } : {},
-    chestClaimed: c.chestClaimed === true,
-  };
-}
-
-/** 纯状态 → 计数器字段（写回时合并进 counter）。 */
-function counterFields(state) {
-  return {
-    taskProgress: { ...state.progress },
-    taskClaimed: { ...state.claimed },
-    chestClaimed: state.chestClaimed === true,
-  };
-}
-
-/** 一局结算后累计进度（返回新状态）。 */
-function applyMatch(state, summary, cfg) {
-  const c = cfg || DAILY_TASKS;
-  const st = state || stateFromCounter(null, '');
-  const progress = { ...st.progress };
-  for (let i = 0; i < c.pool.length; i += 1) {
-    const task = c.pool[i];
-    const inc = metricValue(summary, task.metric);
-    const prev = progress[task.id] || 0;
-    progress[task.id] = task.mode === 'max' ? Math.max(prev, inc) : prev + inc;
-  }
-  return { ...st, progress };
-}
-
-/** 任务状态列表（供回执与领奖校验）。 */
-function taskStates(state, cfg) {
-  const c = cfg || DAILY_TASKS;
-  const st = state || stateFromCounter(null, '');
-  return c.pool.map((task) => {
-    const raw = st.progress[task.id] || 0;
-    const claimed = st.claimed[task.id] === true;
-    const done = raw >= task.goal;
-    return {
-      id: task.id,
-      name: task.name,
-      goal: task.goal,
-      progress: Math.min(raw, task.goal),
-      done,
-      claimed,
-      claimable: done && !claimed,
-      coins: task.coins,
-    };
-  });
-}
-
-/** 全部任务是否达成。 */
-function allDone(state, cfg) {
-  return taskStates(state, cfg).every((t) => t.done);
-}
-
-/** 宝箱状态（含是否可领）。 */
-function chestState(state, cfg) {
-  const c = cfg || DAILY_TASKS;
-  const st = state || stateFromCounter(null, '');
-  const ready = allDone(st, c);
-  const claimed = st.chestClaimed === true;
-  return { coins: c.chestCoins, ready, claimed, claimable: ready && !claimed };
-}
-
-/** 领取单个任务（幂等）。 */
-function claim(state, taskId, cfg) {
-  const c = cfg || DAILY_TASKS;
-  const st = state || stateFromCounter(null, '');
-  const task = c.pool.find((t) => t.id === taskId);
-  if (!task) return { state: st, coins: 0, ok: false, reason: 'unknown-task' };
-  if ((st.progress[taskId] || 0) < task.goal) return { state: st, coins: 0, ok: false, reason: 'not-done' };
-  if (st.claimed[taskId] === true) return { state: st, coins: 0, ok: false, reason: 'already-claimed' };
-  return { state: { ...st, claimed: { ...st.claimed, [taskId]: true } }, coins: task.coins, ok: true, reason: 'ok' };
-}
-
-/** 领取宝箱（幂等）。 */
-function claimChest(state, cfg) {
-  const c = cfg || DAILY_TASKS;
-  const st = state || stateFromCounter(null, '');
-  if (!allDone(st, c)) return { state: st, coins: 0, ok: false, reason: 'not-all-done' };
-  if (st.chestClaimed === true) return { state: st, coins: 0, ok: false, reason: 'already-claimed' };
-  return { state: { ...st, chestClaimed: true }, coins: c.chestCoins, ok: true, reason: 'ok' };
-}
-
-/** 回执用的任务汇总：`{ tasks, chest }`。 */
-function summaryOf(state, cfg) {
-  return { tasks: taskStates(state, cfg), chest: chestState(state, cfg) };
-}
-
-module.exports = {
-  metricValue,
-  stateFromCounter,
-  counterFields,
-  applyMatch,
-  taskStates,
-  allDone,
-  chestState,
-  claim,
-  claimChest,
-  summaryOf,
-};
   };
 
   // ── server/functions/reportEvents/index.js

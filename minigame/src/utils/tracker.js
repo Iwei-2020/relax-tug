@@ -39,9 +39,7 @@ const EVENTS = {
   SHARE_SUCCESS: 'share_success',
   SHARE_FAIL: 'share_fail',
   SHARE_CARD_SHOWN: 'share_card_shown', // 分享卡预览页展示（§4.5）
-  MATCH_SETTLED: 'match_settled', // 局外成长与任务进度落账（§4.6 / §4.7：exp / coins / result）
-  TASK_CLAIM: 'task_claim', // 领取单条每日任务（§4.7：id / coins）
-  TASK_CHEST_CLAIM: 'task_chest_claim', // 领取每日宝箱（§4.7：coins）
+  MATCH_SETTLED: 'match_settled', // 局外成长落账（§4.6：exp / coins / result）
   LEVEL_PICK: 'level_pick', // 选关（§4.8：level / via，via=ad 表示需要看广告的跳关）
   LEVEL_START: 'level_start', // 进入某关（§4.8：level）
   LEVEL_CLEARED: 'level_cleared', // 过关（§4.8：level / livesLeft）

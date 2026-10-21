@@ -7,7 +7,7 @@
  *   1) validate 接受合法闯关上报（多关卡）与历史 classic 上报；
  *   2) 拒绝各类篡改：mode / level / livesLeft / 难度入门档 / 位移系数 / 段数上界 / 收官一致性；
  *   3) recordResult 推进 `levels.max`（仅过关推进，权威口径）；
- *   4) dailyTasks 云函数回执携带 `levels`，供换设备恢复进度。
+ *   4) playerState 云函数回执携带 `levels`，供换设备恢复进度。
  */
 
 const test = require('node:test');
@@ -17,7 +17,7 @@ const { validate, recordResult } = require('../server/lib/result.js');
 const serverLevels = require('../server/lib/levels.js');
 const { createMemoryStore } = require('../server/lib/store.js');
 const { resetStore } = require('../server/lib/store-provider.js');
-const dailyTasksFn = require('../server/functions/dailyTasks/index.js');
+const playerStateFn = require('../server/functions/playerState/index.js');
 const {
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
@@ -205,23 +205,23 @@ test('recordResult：非法闯关上报被拒（不写进度、不发奖）', as
   assert.equal(profile, null, '被拒的上报不应落库');
 });
 
-/* ── 4. dailyTasks 回执携带 levels ─────────────────────────────── */
+/* ── 4. playerState 回执携带 levels ────────────────────────────── */
 
-test('dailyTasks 云函数：state 回执携带权威 levels（换设备恢复进度）', async () => {
+test('playerState 云函数：回执携带权威成长和 levels（换设备恢复进度）', async () => {
   const store = createMemoryStore();
   resetStore(store);
   const now = Date.now();
 
   // 未玩过：levels.max = 0
-  let res = await dailyTasksFn({ action: 'state' }, CTX);
+  let res = await playerStateFn({}, CTX);
   assert.equal(res.code, 0, res.msg);
   assert.deepEqual(res.data.levels, { max: 0 });
 
   await recordResult(store, 'u1', levelPayload(17), now);
   await recordResult(store, 'u1', levelLosePayload(30), now);
 
-  res = await dailyTasksFn({ action: 'state' }, CTX);
-  assert.deepEqual(res.data.levels, { max: 17 }, '权威进度应回执到每日任务面板');
+  res = await playerStateFn({}, CTX);
+  assert.deepEqual(res.data.levels, { max: 17 }, '服务端应返回权威关卡进度');
   // classic 玩法上报不影响 levels
   const classic = {
     result: 'win',
@@ -239,6 +239,6 @@ test('dailyTasks 云函数：state 回执携带权威 levels（换设备恢复�
   classic.displacementPx = clampPx(200 * DISPLACEMENT_FACTOR);
   classic.netEnergy = 200;
   await recordResult(store, 'u1', classic, now);
-  res = await dailyTasksFn({ action: 'state' }, CTX);
+  res = await playerStateFn({}, CTX);
   assert.deepEqual(res.data.levels, { max: 17 });
 });

@@ -59,8 +59,8 @@ function hashSeed(key) {
 /**
  * UTC+8 自然日的日期键（`yyyy-mm-dd`）。
  *
- * 唯一口径来源：每日挑战种子（§4.4）与每日任务刷新（§4.7）都必须按**同一个「今天」**切分，
- * 因此两者共用本函数；服务端 `server/lib/result.js` 的 `dayKey` 与之同口径（有单测交叉校验）。
+ * 每日挑战种子与服务端对局记账按同一个 UTC+8 自然日切分；
+ * 服务端 `server/lib/result.js` 的 `dayKey` 与之同口径（有单测交叉校验）。
  * @param {number} nowMs 当前时间戳（毫秒）
  * @returns {string} UTC+8 自然日
  */

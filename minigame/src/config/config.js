@@ -127,21 +127,6 @@ const CONFIG = {
     ],
   },
 
-  /* ── §4.7 / §6.6 每日任务与宝箱（UTC+8 自然日刷新） ─────────────── */
-  // metric：取对局摘要中的哪个字段；mode：'count'（每局 +0/1）/ 'sum'（累加）/ 'max'（取最大）。
-  // 刷新口径与每日挑战（core/rng.dailyChallengeSeed）共用同一 UTC+8 dayKey —— 保证「今天」是同一个今天。
-  dailyTasks: {
-    enabled: true,
-    pool: [
-      { id: 'play3', name: '完成 3 局对战', metric: 'matches', mode: 'count', goal: 3, coins: 40 },
-      { id: 'win2', name: '赢得 2 局', metric: 'wins', mode: 'count', goal: 2, coins: 60 },
-      // 目标值随越线阈值重标定同步上调：单局命中段数由 ≈18 翻到 ≈36，原目标会在一局内达标。
-      { id: 'perfect10', name: '累计 24 次完美判定', metric: 'perfectHits', mode: 'sum', goal: 24, coins: 50 },
-      { id: 'combo8', name: '单局达成 15 连击', metric: 'bestCombo', mode: 'max', goal: 15, coins: 40 },
-    ],
-    chestCoins: 100, // 全部任务达成后可领的每日宝箱
-  },
-
   /* ── §4.8 闯关模式（1-100 关） ─────────────────────────────────── */
   // 100 关不为每关手配数值：用难度档关键帧插值窗口时长，段数与候选随关卡 / 局内轮次爬坡。
   // 「局内进度」= 同一关内随轮次从「本关入门档」爬到「本关上限档」（roundRamp）。
@@ -242,7 +227,6 @@ module.exports = {
   EVENT_MAX_PER_MATCH,
   MONETIZATION: CONFIG.monetization,
   PROGRESSION: CONFIG.progression,
-  DAILY_TASKS: CONFIG.dailyTasks,
   PALETTE: CONFIG.palette,
 
   LEVEL_MODE: CONFIG.levelMode,

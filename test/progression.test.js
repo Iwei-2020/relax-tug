@@ -1,33 +1,26 @@
 'use strict';
 
 /**
- * 局外成长与每日任务单测（《项目说明书》§4.6 / §4.7 + §6.6）
+ * 局外成长单测（《项目说明书》§4.6 + §6.6）
  *
  * 覆盖：
  *   1) 等级曲线单调、阈值正确、满级封顶；
  *   2) 段位映射边界与单调（只升不降）；
  *   3) 单局奖励公式 + 单局 / 每日封顶（防刷）；
- *   4) 每日任务三种累计口径（count / sum / max）；
- *   5) 领奖幂等、跨日刷新（不结转）；
- *   6) **两端等价**：客户端 core 与服务端 lib 用同一份镜像参数，同输入必须同输出；
- *   7) 端到端记账：recordResult 落库成长与任务进度，dailyTasks 云函数领奖口径。
+ *   4) **两端等价**：客户端 core 与服务端 lib 用同一份镜像参数，同输入必须同输出；
+ *   5) 端到端记账：recordResult 落库成长与权威进度。
  */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const progression = require('../minigame/src/core/progression.js');
-const clientTasks = require('../minigame/src/core/tasks.js');
 const serverProgression = require('../server/lib/progression.js');
-const serverTasks = require('../server/lib/tasks.js');
 const { recordResult, dayKey } = require('../server/lib/result.js');
 const { createMemoryStore } = require('../server/lib/store.js');
-const { resetStore } = require('../server/lib/store-provider.js');
-const dailyTasksFn = require('../server/functions/dailyTasks/index.js');
 const { utc8DayKey } = require('../minigame/src/core/rng.js');
 const {
   PROGRESSION,
-  DAILY_TASKS,
   DISPLACEMENT_FACTOR,
   DISPLACEMENT_MAX_PX,
 } = require('../minigame/src/config/config.js');
@@ -64,8 +57,6 @@ function matchSummary(overrides) {
   o.netEnergy = o.myEnergy - o.oppEnergy;
   return o;
 }
-
-const CTX = { headers: { 'x-tt-openid': 'u1' } };
 
 /* ── 1. 等级曲线 ────────────────────────────────────────────────── */
 
@@ -168,89 +159,7 @@ test('normalizeProgress：脏数据收敛成合法进度并重算等级 / 段位
   assert.deepEqual(empty, progression.emptyProgress());
 });
 
-/* ── 3. 每日任务累计口径 ────────────────────────────────────────── */
-
-test('每日任务累计：count（每局 0/1）/ sum（累加）/ max（取最大）', () => {
-  const one = matchSummary({});
-  let st = clientTasks.emptyTasks('2026-10-20');
-  st = clientTasks.applyMatch(st, one);
-  st = clientTasks.applyMatch(st, one);
-  assert.equal(st.progress.play3, 2, 'matches 计数 +1');
-  assert.equal(st.progress.win2, 2, '两局胜利 → wins 计数 2');
-  assert.equal(st.progress.perfect10, one.perfectHits * 2, 'perfectHits 累加（两局）');
-  assert.equal(st.progress.combo8, one.bestCombo, 'bestCombo 取最大（非累加）');
-
-  // 失败局：wins 不增，但 matches 仍 +1
-  const before = st;
-  st = clientTasks.applyMatch(st, matchSummary({ result: 'lose' }));
-  assert.equal(st.progress.win2, 2);
-  assert.equal(st.progress.play3, 3);
-  assert.equal(before.progress.play3, 2, '不可变性：原状态不被修改');
-});
-
-test('每日任务：达成与可领判定、领奖幂等、宝箱仅在全部达成后可领', () => {
-  const day = '2026-10-20';
-  const st = clientTasks.emptyTasks(day);
-
-  // 初始：全部未达成
-  assert.equal(clientTasks.taskStates(st).every((t) => !t.done && !t.claimable), true);
-  assert.equal(clientTasks.claimableIds(st).length, 0);
-  assert.equal(clientTasks.chestState(st).claimable, false, '未全部达成不能领宝箱');
-
-  // 未达成时领取 → not-done，且状态不变
-  const r0 = clientTasks.claim(st, 'win2');
-  assert.equal(r0.ok, false);
-  assert.equal(r0.reason, 'not-done');
-  assert.equal(r0.coins, 0);
-
-  // 攒够：3 胜 → 全部达成
-  let s = st;
-  s = clientTasks.applyMatch(s, matchSummary({}));
-  s = clientTasks.applyMatch(s, matchSummary({}));
-  s = clientTasks.applyMatch(s, matchSummary({}));
-  assert.equal(clientTasks.allDone(s), true);
-  assert.equal(clientTasks.chestState(s).claimable, true);
-
-  // 领取 win2 → 发 60
-  const r1 = clientTasks.claim(s, 'win2');
-  assert.equal(r1.ok, true);
-  assert.equal(r1.coins, DAILY_TASKS.pool.find((t) => t.id === 'win2').coins);
-  // 重复领取 → 幂等
-  const r2 = clientTasks.claim(r1.state, 'win2');
-  assert.equal(r2.ok, false);
-  assert.equal(r2.reason, 'already-claimed');
-  assert.equal(r2.coins, 0);
-  // 未知任务
-  assert.equal(clientTasks.claim(r1.state, 'nope').reason, 'unknown-task');
-
-  // 宝箱：领一次 → 再领幂等
-  const c1 = clientTasks.claimChest(r1.state);
-  assert.equal(c1.ok, true);
-  assert.equal(c1.coins, DAILY_TASKS.chestCoins);
-  const c2 = clientTasks.claimChest(c1.state);
-  assert.equal(c2.ok, false);
-  assert.equal(c2.reason, 'already-claimed');
-  assert.equal(clientTasks.chestState(c1.state).claimable, false);
-});
-
-test('每日任务：跨日归零重开（不结转），同日保留', () => {
-  let st = clientTasks.emptyTasks('2026-10-20');
-  st = clientTasks.applyMatch(st, matchSummary({}));
-  const kept = clientTasks.rollover(st, '2026-10-20');
-  assert.equal(kept.progress.win2, 1, '同日不重置');
-
-  const reset = clientTasks.rollover(st, '2026-10-21');
-  assert.equal(reset.day, '2026-10-21');
-  assert.deepEqual(reset.progress, {}, '跨日进度归零');
-  assert.equal(reset.chestClaimed, false);
-
-  // normalizeTasks：脏数据 + 跨日 → 合法空状态
-  const norm = clientTasks.normalizeTasks({ day: '2026-10-20', progress: { win2: 5 }, claimed: { win2: true } }, '2026-10-21');
-  assert.deepEqual(norm.progress, {});
-  assert.equal(norm.claimed.win2, undefined);
-});
-
-/* ── 4. 两端等价（客户端 core ↔ 服务端 lib） ────────────────────── */
+/* ── 3. 两端等价（客户端 core ↔ 服务端 lib） ────────────────────── */
 
 test('两端等价：奖励 / 等级 / 段位公式一致（同一份镜像参数）', () => {
   const samples = [];
@@ -270,33 +179,6 @@ test('两端等价：奖励 / 等级 / 段位公式一致（同一份镜像参�
   }
 });
 
-test('两端等价：每日任务累计与领奖逻辑一致', () => {
-  const summaries = [
-    matchSummary({}),
-    matchSummary({ result: 'lose', perfectHits: 0 }),
-    matchSummary({ result: 'win', perfectHits: 8 }),
-    matchSummary({ result: 'draw', perfectHits: 3 }),
-  ];
-  let client = clientTasks.emptyTasks('d');
-  let server = serverTasks.stateFromCounter(null, 'd');
-  for (const s of summaries) {
-    client = clientTasks.applyMatch(client, s);
-    server = serverTasks.applyMatch(server, s);
-  }
-  assert.deepEqual(client.progress, server.progress, '累计口径一致');
-  assert.deepEqual(clientTasks.taskStates(client), serverTasks.taskStates(server), '任务状态一致');
-
-  for (const id of ['play3', 'win2', 'perfect10', 'combo8', 'nope']) {
-    const a = clientTasks.claim(client, id);
-    const b = serverTasks.claim(server, id);
-    assert.equal(a.ok, b.ok, `领奖结果一致：${id}`);
-    assert.equal(a.coins, b.coins);
-    assert.equal(a.reason, b.reason);
-  }
-  // 宝箱一致性
-  assert.deepEqual(clientTasks.chestState(client), serverTasks.chestState(server));
-});
-
 test('两端等价：UTC+8 自然日口径一致（含跨 UTC 零点）', () => {
   const samples = [
     Date.UTC(2026, 9, 20, 0, 0, 0), // UTC 00:00 → UTC+8 已是 08:00 同日
@@ -311,9 +193,9 @@ test('两端等价：UTC+8 自然日口径一致（含跨 UTC 零点）', () => 
   assert.notEqual(utc8DayKey(Date.UTC(2026, 9, 20, 15, 59, 59)), utc8DayKey(Date.UTC(2026, 9, 20, 16, 0, 0)));
 });
 
-/* ── 5. 端到端记账 ──────────────────────────────────────────────── */
+/* ── 4. 端到端记账 ──────────────────────────────────────────────── */
 
-test('recordResult：落库成长、每日封顶生效、回执含权威进度与任务', async () => {
+test('recordResult：落库成长、每日封顶生效、回执仅含权威进度', async () => {
   const store = createMemoryStore();
   const now = Date.now();
   const perMatchExp = progression.awardFor(matchSummary({})).exp; // 单局实发经验（未触每日封顶前）
@@ -325,7 +207,7 @@ test('recordResult：落库成长、每日封顶生效、回执含权威进度�
   assert.equal(first.data.progress.exp, perMatchExp);
   assert.equal(first.data.progress.wins, 1);
   assert.equal(first.data.progress.level, progression.levelFromExp(perMatchExp).level);
-  assert.equal(first.data.tasks.tasks.find((t) => t.id === 'win2').progress, 1);
+  assert.equal(Object.hasOwn(first.data, 'tasks'), false, '回执不再包含每日任务状态');
 
   // 每日经验封顶：连打到额度耗尽 —— 第（partialIdx+1）局被削到剩余额度、其后再打均为 0。
   // 局数由 cap / perMatchExp 推导，重标定后单局经验变化时无需改测试。
@@ -350,6 +232,27 @@ test('recordResult：落库成长、每日封顶生效、回执含权威进度�
   assert.equal(last.data.progress.exp, dailyCap);
 });
 
+test('recordResult：保存计数器时清除历史每日任务字段', async () => {
+  const now = Date.now();
+  const day = dayKey(now);
+  const store = createMemoryStore({
+    counters: {
+      [`u1:${day}`]: {
+        taskProgress: { win2: 1 },
+        taskClaimed: { win2: true },
+        chestClaimed: true,
+      },
+    },
+  });
+  const result = await recordResult(store, 'u1', matchSummary({}), now);
+  assert.equal(result.code, 0);
+
+  const counter = await store.countersOf('u1', day);
+  assert.equal(Object.hasOwn(counter, 'taskProgress'), false);
+  assert.equal(Object.hasOwn(counter, 'taskClaimed'), false);
+  assert.equal(Object.hasOwn(counter, 'chestClaimed'), false);
+});
+
 test('recordResult：非法上报被拒（篡改位移）', async () => {
   const store = createMemoryStore();
   const bad = matchSummary({});
@@ -357,60 +260,4 @@ test('recordResult：非法上报被拒（篡改位移）', async () => {
   const res = await recordResult(store, 'u1', bad, Date.now());
   assert.notEqual(res.code, 0);
   assert.match(res.msg, /位移与能量不一致/);
-});
-
-test('dailyTasks 云函数：进度不足 → 达成可领 → 重复领取幂等 → 宝箱', async () => {
-  const store = createMemoryStore();
-  resetStore(store);
-  const now = Date.now();
-  // 单局奖励（与服务端同口径）：结果基础 + 完美段数折算，避免硬编码随重标定漂移
-  const perWin = PROGRESSION.reward.coinsByResult.win + PROGRESSION.reward.coinsPerPerfect * matchSummary({}).perfectHits;
-
-  // 初始：全不可领
-  let res = await dailyTasksFn({ action: 'state' }, CTX);
-  assert.equal(res.code, 0);
-  assert.equal(res.data.tasks.tasks.every((t) => !t.claimable), true);
-  assert.equal(res.data.tasks.chest.claimable, false);
-
-  // 两局胜利
-  await recordResult(store, 'u1', matchSummary({}), now);
-  await recordResult(store, 'u1', matchSummary({}), now);
-
-  res = await dailyTasksFn({ action: 'state' }, CTX);
-  const win2 = res.data.tasks.tasks.find((t) => t.id === 'win2');
-  assert.equal(win2.claimable, true, '胜 2 局后可领');
-  assert.equal(res.data.tasks.tasks.find((t) => t.id === 'play3').claimable, false, '还差 1 局');
-  assert.equal(res.data.progress.coins, perWin * 2, '两局胜利产出的金币');
-
-  // 领取
-  res = await dailyTasksFn({ action: 'claim', taskId: 'win2' }, CTX);
-  assert.equal(res.data.granted, 60);
-  assert.equal(res.data.progress.coins, perWin * 2 + 60);
-
-  // 重复领取：幂等，不发奖
-  res = await dailyTasksFn({ action: 'claim', taskId: 'win2' }, CTX);
-  assert.equal(res.data.granted, 0);
-  assert.equal(res.data.reason, 'already-claimed');
-  assert.equal(res.data.progress.coins, perWin * 2 + 60);
-
-  // 未达成时领取 → not-done（此时 play3 只到 2/3）
-  res = await dailyTasksFn({ action: 'claim', taskId: 'play3' }, CTX);
-  assert.equal(res.data.granted, 0);
-  assert.equal(res.data.reason, 'not-done');
-
-  // 再来一局 → 全部达成 → 领宝箱
-  await recordResult(store, 'u1', matchSummary({}), now);
-  res = await dailyTasksFn({ action: 'state' }, CTX);
-  assert.equal(res.data.tasks.chest.claimable, true);
-  res = await dailyTasksFn({ action: 'chest' }, CTX);
-  assert.equal(res.data.granted, DAILY_TASKS.chestCoins);
-  const afterChest = res.data.progress.coins;
-  res = await dailyTasksFn({ action: 'chest' }, CTX);
-  assert.equal(res.data.granted, 0);
-  assert.equal(res.data.reason, 'already-claimed');
-  assert.equal(res.data.progress.coins, afterChest, '重复领宝箱不发奖');
-
-  // 未知 action / 缺身份
-  assert.notEqual((await dailyTasksFn({ action: 'boom' }, CTX)).code, 0);
-  assert.notEqual((await dailyTasksFn({ action: 'state' }, {})).code, 0);
 });

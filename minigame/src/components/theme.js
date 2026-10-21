@@ -42,6 +42,8 @@ const HOME = {
   ctaFrom: '#FF6FB5',
   ctaMid: '#FF9E4A',
   ctaTo: '#FFD44F',
+  challengeCta: ['#57D8EC', '#648CFF', '#A56BFF'],
+  levelsCta: ['#52DDB0', '#36C9B8', '#53B9ED'],
   ctaBrink: '#FFFFFF',
   ctaText: '#FFFFFF',
   ctaTextGlow: 'rgba(196,74,16,0.45)',

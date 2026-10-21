@@ -343,7 +343,7 @@ function drawDecor(ctx, layout, tMs) {
 /**
  * 主 CTA（糖果渐变胶囊 + 可选金色绳圈，呼应拔河绳）。
  * @param {object} rect {x,y,w,h}
- * @param {object} opts {label, font, ring, pressed, bob, cache, textGlow}
+ * @param {object} opts {label, font, ring, pressed, bob, cache, textGlow, gradient}
  */
 function drawCtaButton(ctx, rect, opts) {
   const o = opts || {};
@@ -397,12 +397,13 @@ function drawCtaButton(ctx, rect, opts) {
   }
 
   // 2) 渐变胶囊 + 白色亮边（渐变缓存一次，避免每帧新建）
-  const gkey = o.pressed ? 'cta_on' : 'cta';
+  const colors = o.gradient || [HOME.ctaFrom, HOME.ctaMid, HOME.ctaTo];
+  const gkey = `${o.pressed ? 'cta_on' : 'cta'}_${colors.join('_')}`;
   if (!cache[gkey]) {
     const g = ctx.createLinearGradient(x, y, x + w, y);
-    g.addColorStop(0, HOME.ctaFrom);
-    g.addColorStop(0.52, HOME.ctaMid);
-    g.addColorStop(1, HOME.ctaTo);
+    g.addColorStop(0, colors[0]);
+    g.addColorStop(0.52, colors[1]);
+    g.addColorStop(1, colors[2]);
     cache[gkey] = g;
   }
   ctx.fillStyle = cache[gkey];

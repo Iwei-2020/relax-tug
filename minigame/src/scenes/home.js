@@ -5,20 +5,19 @@
  *
  * 视觉：亮蓝渐变天空 + 云朵/星星/彩纸/彩带氛围装饰，白描边暖色渐变标题，
  * 磨砂玻璃资料卡片，粉→橙→琥珀渐变 + 金色绳圈的主 CTA（呼应拔河绳），
- * 两个彩色描边玻璃胶囊次级入口。
+ * 三个纵向排列的糖果渐变 CTA。
  *
  * 按钮与文字原语统一取自 components/decor.js 的 `drawCtaButton / drawPillButton /
  * drawOutlinedText / drawGlassPanel`，与对局页、结算页共用同一套马卡龙观感。
  *
- * 交互：中央大按钮「开始对战」（主 CTA）；副入口「分享战绩 / 挑战好友」；
- * 其下「闯关挑战」金色胶囊（§4.8 闯关模式：进入关卡选择页）；卡片显示我方昵称与当前胜场。
+ * 交互：中央「开始对战」「挑战好友」「闯关挑战」入口；卡片显示我方昵称与当前胜场。
  * 3 秒看懂、一次点击即开局（§1.4 秒懂玩法）。
  *
  * 热区约束（§2.1）：所有可点击区域按最小 88×88 逻辑像素做命中扩展，
  * 仅扩大可点范围，不改变视觉尺寸。
  */
 
-const { HOME, MACARON, MIN_TOUCH } = require('../components/theme.js');
+const { HOME, MIN_TOUCH } = require('../components/theme.js');
 const decor = require('../components/decor.js');
 const { EVENTS, track } = require('../utils/tracker.js');
 
@@ -29,52 +28,43 @@ function computeHomeLayout(layout) {
   const cx = Math.round(W / 2);
 
   const cardW = Math.round(W * 0.836);
-  const cardH = Math.round(H * 0.246);
+  const cardH = Math.round(H * 0.205);
   const card = {
     x: Math.round(cx - cardW / 2),
-    y: Math.round(H * 0.332),
+    y: Math.round(H * 0.3),
     w: cardW,
     h: cardH,
     r: Math.round(W * 0.077),
   };
 
-  const mainH = Math.round(H * 0.098);
-  const mainW = Math.round(W * 0.755);
-  const mainCy = Math.round(H * 0.578);
+  const mainH = Math.round(H * 0.086);
+  const mainW = Math.round(W * 0.72);
+  const subH = Math.round(H * 0.078);
+  const subW = Math.round(W * 0.7);
+  const rowGap = Math.round(H * 0.022);
+  const mainCy = Math.round(card.y + card.h);
   const main = { x: Math.round(cx - mainW / 2), y: Math.round(mainCy - mainH / 2), w: mainW, h: mainH };
-
-  const subH = Math.round(H * 0.082);
-  const subCy = Math.round(H * 0.698);
-  const subGap = Math.round(W * 0.041);
-  const subW = Math.round((W * 0.878 - subGap) / 2);
-  const share = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(subCy - subH / 2), w: subW, h: subH };
-  const challenge = { x: Math.round(cx + subGap / 2), y: Math.round(subCy - subH / 2), w: subW, h: subH };
-
-  // 第三行（§4.8 闯关挑战 + §4.7 每日任务）：沿用次级胶囊的双列几何，置于两个胶囊之下；
-  // 矮屏时下移到「与上方胶囊触摸区刚好不重叠」的位置
-  const row2Cy = Math.max(Math.round(H * 0.802), subCy + MIN_TOUCH);
-  const levels = { x: Math.round(cx - subGap / 2 - subW), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
-  const tasks = { x: Math.round(cx + subGap / 2), y: Math.round(row2Cy - subH / 2), w: subW, h: subH };
+  const levelsCy = Math.round(mainCy + mainH / 2 + rowGap + subH / 2);
+  const levels = { x: Math.round(cx - subW / 2), y: Math.round(levelsCy - subH / 2), w: subW, h: subH };
+  const challengeCy = Math.round(levelsCy + subH + rowGap);
+  const challenge = { x: Math.round(cx - subW / 2), y: Math.round(challengeCy - subH / 2), w: subW, h: subH };
 
   return {
     W,
     H,
     cx,
-    titleY: Math.round(H * 0.213),
+    titleY: Math.round(H * 0.19),
     titleFont: Math.round(Math.min(W * 0.118, 48)),
-    subY: Math.round(H * 0.271),
+    subY: Math.round(H * 0.245),
     subFont: Math.round(Math.min(W * 0.052, 22)),
     nameFont: Math.round(Math.min(W * 0.058, 24)),
     winsFont: Math.round(Math.min(W * 0.045, 19)),
-    ctaFont: Math.round(Math.min(W * 0.102, 40)),
-    pillFont: Math.round(Math.min(W * 0.056, 22)),
-    row2Font: Math.round(Math.min(W * 0.05, 20)),
+    ctaFont: Math.round(Math.min(W * 0.085, 34)),
+    pillFont: Math.round(Math.min(W * 0.074, 30)),
     card,
     main,
-    share,
     challenge,
     levels,
-    tasks,
   };
 }
 
@@ -104,12 +94,10 @@ function titleGradient(ctx, L, cache) {
  * @param {object} options
  * @param {object} options.layout 见 theme.computeLayout
  * @param {() => void} options.onStart 点击「开始对战」
- * @param {() => void} [options.onShare] 点击「分享战绩」
  * @param {() => void} [options.onChallenge] 点击「挑战好友」
  * @param {() => void} [options.onLevels] 点击「闯关挑战」（§4.8 进入关卡选择页）
- * @param {() => void} [options.onTasks] 点击「每日任务」（§4.7）
- * @param {{nickname?:string, wins?:number, level?:number, rankName?:string, coins?:number,
- *          tasksClaimable?:number}} [options.profile] 我方资料（本地存档 + 服务端对账后填充）
+ * @param {{nickname?:string, wins?:number, level?:number, rankName?:string, coins?:number}} [options.profile]
+ *   我方资料（本地存档 + 服务端对账后填充）
  */
 function createHomeScene(options) {
   const opts = options || {};
@@ -117,22 +105,30 @@ function createHomeScene(options) {
   const L = computeHomeLayout(layout);
   const profile = opts.profile || {};
   const cache = {}; // 渐变缓存（只在首帧创建一次）
+  const buttonCaches = { main: {}, challenge: {}, levels: {} };
   const hitMain = touchRect(L.main);
-  const hitShare = touchRect(L.share);
   const hitChallenge = touchRect(L.challenge);
   const hitLevels = touchRect(L.levels);
-  const hitTasks = touchRect(L.tasks);
   let pressed = null;
   let tMs = 0;
 
-  /** 命中目标（胶囊优先于下一行：矮屏两者触摸区相邻，交给上方胶囊，避免误触）。 */
+  /** 扩大的触摸区域可能重叠，取命中区域内中心距离最近的按钮。 */
   function targetAt(x, y) {
-    if (hit(hitMain, x, y)) return 'main';
-    if (hit(hitShare, x, y)) return 'share';
-    if (hit(hitChallenge, x, y)) return 'challenge';
-    if (hit(hitLevels, x, y)) return 'levels';
-    if (hit(hitTasks, x, y)) return 'tasks';
-    return null;
+    const targets = [
+      { id: 'main', hitRect: hitMain, centerY: L.main.y + L.main.h / 2 },
+      { id: 'challenge', hitRect: hitChallenge, centerY: L.challenge.y + L.challenge.h / 2 },
+      { id: 'levels', hitRect: hitLevels, centerY: L.levels.y + L.levels.h / 2 },
+    ];
+    let closest = null;
+    let closestDistance = Infinity;
+    for (const target of targets) {
+      const distance = Math.abs(y - target.centerY);
+      if (hit(target.hitRect, x, y) && distance < closestDistance) {
+        closest = target.id;
+        closestDistance = distance;
+      }
+    }
+    return closest;
   }
 
   return {
@@ -145,6 +141,7 @@ function createHomeScene(options) {
     draw(ctx) {
       const cx = L.cx;
       const card = L.card;
+      const idleBob = Math.sin(tMs * 0.0016) * 2.2;
 
       decor.drawSky(ctx, layout, cache);
       decor.drawDecor(ctx, layout, tMs);
@@ -180,14 +177,14 @@ function createHomeScene(options) {
       ctx.shadowOffsetY = 2;
       ctx.fillStyle = '#FFFFFF';
       ctx.font = `bold ${L.nameFont}px sans-serif`;
-      ctx.fillText(profile.nickname || '我', pCx, card.y + card.h * 0.16);
+      ctx.fillText(profile.nickname || '我', pCx, card.y + card.h * 0.3);
       // §4.6 局外成长：段位 · 等级 · 胜场 · 金币
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.font = `${L.winsFont}px sans-serif`;
       ctx.fillText(
         `${profile.rankName || '青铜'} Lv.${profile.level || 1} · 胜场 ${profile.wins || 0} · 金币 ${profile.coins || 0}`,
         pCx,
-        card.y + card.h * 0.34
+        card.y + card.h * 0.62
       );
       ctx.restore();
 
@@ -195,51 +192,29 @@ function createHomeScene(options) {
       decor.drawCtaButton(ctx, L.main, {
         label: '开始对战',
         font: `bold ${L.ctaFont}px sans-serif`,
+        gradient: [HOME.ctaFrom, HOME.ctaMid, HOME.ctaTo],
         pressed: pressed === 'main',
-        bob: pressed === 'main' ? 0 : Math.sin(tMs * 0.0016) * 2.2,
-        cache,
+        bob: pressed === 'main' ? 0 : idleBob,
+        cache: buttonCaches.main,
       });
-      decor.drawPillButton(ctx, L.share, {
-        label: '分享战绩',
+      decor.drawCtaButton(ctx, L.levels, {
+        label: '闯关挑战',
         font: `bold ${L.pillFont}px sans-serif`,
-        border: HOME.mint,
-        glow: HOME.mintGlow,
-        fill: HOME.mintFill,
-        pressed: pressed === 'share',
+        ring: false,
+        gradient: HOME.levelsCta,
+        pressed: pressed === 'levels',
+        bob: pressed === 'levels' ? 0 : idleBob,
+        cache: buttonCaches.levels,
       });
-      decor.drawPillButton(ctx, L.challenge, {
+      decor.drawCtaButton(ctx, L.challenge, {
         label: '挑战好友',
         font: `bold ${L.pillFont}px sans-serif`,
-        border: HOME.violet,
-        glow: HOME.violetGlow,
-        fill: HOME.violetFill,
+        ring: false,
+        gradient: HOME.challengeCta,
         pressed: pressed === 'challenge',
+        bob: pressed === 'challenge' ? 0 : idleBob,
+        cache: buttonCaches.challenge,
       });
-      decor.drawPillButton(ctx, L.levels, {
-        label: '闯关挑战',
-        font: `bold ${L.row2Font}px sans-serif`,
-        border: HOME.gold,
-        glow: HOME.goldGlow,
-        fill: HOME.goldFill,
-        pressed: pressed === 'levels',
-      });
-      decor.drawPillButton(ctx, L.tasks, {
-        label: '每日任务',
-        font: `bold ${L.row2Font}px sans-serif`,
-        border: MACARON.our,
-        glow: 'rgba(255,123,169,0.55)',
-        fill: HOME.mintFill,
-        pressed: pressed === 'tasks',
-      });
-      // 可领红点（§4.7：有未领奖励时提示）
-      if ((profile.tasksClaimable || 0) > 0) {
-        ctx.save();
-        ctx.fillStyle = '#FF5A7A';
-        ctx.beginPath();
-        ctx.arc(L.tasks.x + L.tasks.w - 12, L.tasks.y + 12, 9, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
     },
 
     onTouchStart(x, y) {
@@ -252,17 +227,13 @@ function createHomeScene(options) {
       if (target === 'main') {
         track(EVENTS.MATCH_START, { from: 'home' });
         if (typeof opts.onStart === 'function') opts.onStart();
-      } else if (target === 'share') {
-        if (typeof opts.onShare === 'function') opts.onShare();
       } else if (target === 'challenge') {
         if (typeof opts.onChallenge === 'function') opts.onChallenge();
       } else if (target === 'levels') {
         if (typeof opts.onLevels === 'function') opts.onLevels();
-      } else if (target === 'tasks') {
-        if (typeof opts.onTasks === 'function') opts.onTasks();
       }
     },
   };
 }
 
-module.exports = { createHomeScene };
+module.exports = { createHomeScene, computeHomeLayout };
