@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 
 const progression = require('../minigame/src/core/progression.js');
 const serverProgression = require('../server/lib/progression.js');
-const { recordResult, dayKey } = require('../server/lib/result.js');
+const { recordResult, dayKey, validate } = require('../server/lib/result.js');
 const { createMemoryStore } = require('../server/lib/store.js');
 const { utc8DayKey } = require('../minigame/src/core/rng.js');
 const {
@@ -214,4 +214,21 @@ test('recordResult：非法上报被拒（篡改位移）', async () => {
   const res = await recordResult(store, 'u1', bad, Date.now());
   assert.notEqual(res.code, 0);
   assert.match(res.msg, /位移与能量不一致/);
+});
+
+test('服务端接受普通对战动态序列和超过 45 秒的合法对局', () => {
+  const summary = matchSummary({
+    result: 'win',
+    rankId: 'gold',
+    rounds: 2,
+    hits: 8,
+    perfectHits: 8,
+    misses: 0,
+    timeouts: 0,
+    bestCombo: 8,
+    myEnergy: 240,
+    oppEnergy: 20,
+    durationMs: 60000,
+  });
+  assert.equal(validate(summary).ok, true, validate(summary).errors.join('；'));
 });

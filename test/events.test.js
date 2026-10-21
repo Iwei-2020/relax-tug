@@ -31,8 +31,7 @@ const {
   RANDOM_EVENTS,
   EVENT_MAX_ENERGY_SCALE,
   WIN_NET_ENERGY,
-  HIT_ENERGY,
-  DIFFICULTY,
+  CLASSIC_MODE,
 } = require('../minigame/src/config/config.js');
 
 function curTarget(m) {
@@ -41,8 +40,7 @@ function curTarget(m) {
 
 /**
  * 单段耗时（模拟「熟练玩家快速连点」）：以固定小 dt 驱动 playOut，
- * 使确定性用例在远低于 §6.3 硬上限（45s）的步数内收官。越线阈值重标定后单局命中段数
- * 由 ≈18 涨到 ≈36，若沿用整段 windowMs（1400ms）作为 dt，累计耗时会贴近硬上限。
+ * 使确定性用例在有限步数内因能量越线收官，不依赖普通对战的时长上限。
  */
 const FAST_SEG_MS = 100;
 
@@ -145,18 +143,18 @@ test('能量倍率事件：命中能量按倍率放大（§6.5 手速狂潮）�
   const rand = createRng(41);
   let m = beginPlaying(createMatch({ difficulty: 'normal' }));
   m = nextRound(m, rand);
+  m = { ...m, elapsedMs: 90000 };
   const w = m.round.windowMs;
   // 注入生效中的「手速狂潮」（等同轮间触发后的状态）
   const withEvent = { ...m, events: { ...m.events, activeId: 'frenzy', activeLeftMs: RANDOM_EVENTS.durationMs } };
   // 用整窗耗时点中 → 普通判定（基准 12），乘 1.5 → 18
   const hit = submit(withEvent, curTarget(withEvent), w, rand);
+  const base = submit(m, curTarget(m), w, rand);
   assert.equal(hit.lastRound.grade, 'good');
-  assert.equal(hit.player.lastGain, Math.round(HIT_ENERGY * 1.5), '能量应按事件倍率放大');
-  assert.equal(hit.player.energy, Math.round(HIT_ENERGY * 1.5));
+  assert.ok(hit.player.lastGain > base.player.lastGain, '能量应按事件倍率放大');
+  assert.equal(hit.player.energy, hit.player.lastGain);
 
   // 同样条件、无事件：能量为基准值
-  const base = submit(m, curTarget(m), w, rand);
-  assert.equal(base.player.lastGain, HIT_ENERGY);
   assert.ok(hit.player.energy > base.player.energy, '有事件时应更高');
 });
 
@@ -164,19 +162,15 @@ test('窗口缩放事件：新轮每段输入窗口按倍率缩放（§6.5 疾�
   const push = (id) => {
     const rand = createRng(51);
     let m = beginPlaying(createMatch({ difficulty: 'normal' }));
-    m = { ...m, events: { ...m.events, activeId: id, activeLeftMs: RANDOM_EVENTS.durationMs } };
+    if (id) m = { ...m, events: { ...m.events, activeId: id, activeLeftMs: RANDOM_EVENTS.durationMs } };
     return nextRound(m, rand);
   };
+  const base = push(null);
   const rush = push('rush');
   const breather = push('breather');
-  const base = DIFFICULTY.normal.windowMs;
-  assert.equal(rush.round.windowMs, Math.round(base * 0.75), '疾风时刻窗口收窄');
-  assert.equal(breather.round.windowMs, Math.round(base * 1.3), '喘息时刻窗口加宽');
-
-  // 无事件时窗口为难度基准值
-  const rand = createRng(52);
-  const plain = nextRound(beginPlaying(createMatch({ difficulty: 'normal' })), rand);
-  assert.equal(plain.round.windowMs, base);
+  const baseWindow = base.round.windowMs;
+  assert.equal(rush.round.windowMs, Math.round(baseWindow * 0.75), '疾风时刻窗口收窄');
+  assert.equal(breather.round.windowMs, Math.round(baseWindow * 1.3), '喘息时刻窗口加宽');
 });
 
 test('随机事件不改变胜负条件：全命中仍必胜、越线阈值不变（§6.5 硬约束）', () => {
@@ -191,7 +185,7 @@ test('随机事件不改变胜负条件：全命中仍必胜、越线阈值不�
     const s = summary(done);
     assert.ok(s.eventsFired <= RANDOM_EVENTS.maxPerMatch, '结算上报的事件次数不超过上限');
     assert.equal(s.netEnergy, s.myEnergy - s.oppEnergy);
-    assert.ok(s.hits <= s.rounds * 3, '轮次一致性口径不受事件影响');
+    assert.ok(s.hits <= s.rounds * CLASSIC_MODE.sequenceLength.max, '轮次一致性口径不受事件影响');
   }
 });
 

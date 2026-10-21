@@ -4,7 +4,7 @@
  * 对局状态机单测
  *
  * 依据：《项目说明书》§2.2（对战流程）、§2.3（胜负规则）、§6.3（时长）、§6.4（对手强度）。
- * 覆盖：阶段流转、全命中必胜、全失误必败、能量不为负、硬上限兜底、结算摘要口径、
+ * 覆盖：普通对战直接开局、段位/时长难度曲线、越线收官、无整局时限、结算摘要口径、
  *      状态推进的不可变性（返回新对象，不改入参）。
  */
 
@@ -21,9 +21,10 @@ const {
   shouldFallbackToAI,
   summary,
 } = require('../minigame/src/core/battle.js');
-const { COUNTDOWN_MS, GAME_HARD_LIMIT_MS, DIFFICULTY, SEQUENCE_LENGTH } = require('../minigame/src/config/config.js');
+const { COUNTDOWN_MS, CLASSIC_MODE } = require('../minigame/src/config/config.js');
 const { createRng, dailyChallengeSeed } = require('../minigame/src/core/rng.js');
 const { createRound } = require('../minigame/src/core/matcher.js');
+const classicMode = require('../minigame/src/core/classic.js');
 
 /** 当前待点段的目标色 id（§2.2：一轮 = N 段序列，逐段判定）。 */
 function curTarget(m) {
@@ -32,9 +33,7 @@ function curTarget(m) {
 
 /**
  * 单段耗时（模拟「熟练玩家快速连点」）：以固定小 dt 驱动 playOut，
- * 使「全命中 / 全失误」这类确定性用例在远低于 §6.3 硬上限（45s）的步数内收官。
- * 越线阈值重标定后单局命中段数由 ≈18 涨到 ≈36，若沿用整段 windowMs（1400ms）作为 dt，
- * 累计耗时（≈40s+）会贴近甚至越过硬上限，用例会退化为「超时收官」而非「越线收官」。
+ * 使「全命中 / 全失误」这类确定性用例能在有限步数内因能量越线收官。
  */
 const FAST_SEG_MS = 100;
 
@@ -52,20 +51,23 @@ function playOut(match, rand, decide) {
   return m;
 }
 
-test('createMatch：开局处于 countdown 阶段，双方能量归零', () => {
+test('普通对战开局直接进入 playing，无总倒计时', () => {
   const m = createMatch({ difficulty: 'normal' });
-  assert.equal(m.phase, 'countdown');
-  assert.equal(m.countdownLeftMs, COUNTDOWN_MS);
+  assert.equal(m.phase, 'playing');
+  assert.equal(m.countdownLeftMs, 0);
   assert.equal(m.player.energy, 0);
   assert.equal(m.ghost.state.energy, 0);
   assert.equal(m.result, null);
-  assert.equal(m.difficulty, 'normal');
+  assert.equal(m.rankId, 'bronze');
 });
 
-test('createMatch / advanceCountdown：非法难度回落默认档；倒计时归零自动进入 playing', () => {
-  assert.equal(createMatch({ difficulty: 'not-a-level' }).difficulty, 'normal');
+test('闯关仍保留开场倒计时，普通对战倒计时推进无效', () => {
+  const classic = createMatch({});
+  assert.equal(advanceCountdown(classic, COUNTDOWN_MS), classic);
 
-  let m = createMatch({});
+  let m = createMatch({ mode: 'level', level: 1 });
+  assert.equal(m.phase, 'countdown');
+  assert.equal(m.countdownLeftMs, COUNTDOWN_MS);
   m = advanceCountdown(m, COUNTDOWN_MS - 100);
   assert.equal(m.phase, 'countdown', '未归零前仍处于倒计时');
 
@@ -82,14 +84,15 @@ test('nextRound：生成目标序列与候选集，序列走完前不刷新（§
   let m = beginPlaying(createMatch({ difficulty: 'easy' }));
   m = nextRound(m, rand);
   assert.ok(m.round, '进入 playing 后应有当前轮');
-  assert.equal(m.round.optionIds.length, DIFFICULTY.easy.candidates);
-  assert.equal(m.round.targetIds.length, SEQUENCE_LENGTH);
+  const params = classicMode.paramsAt('bronze', 0);
+  assert.equal(m.round.optionIds.length, params.candidates);
+  assert.equal(m.round.targetIds.length, params.seqLen);
   for (const id of m.round.targetIds) assert.ok(m.round.optionIds.includes(id));
   assert.equal(nextRound(m, rand).round === m.round, true, '序列未走完时不得刷新，否则剩余段会被丢掉');
 
   // 逐段点完最后一段之后，本轮才算结束，此时才允许刷新为新对象
   let done = m;
-  for (let i = 0; i < SEQUENCE_LENGTH; i += 1) {
+  for (let i = 0; i < params.seqLen; i += 1) {
     done = submit(done, curTarget(done), 100, rand);
   }
   assert.equal(done.round.done, true, '走完最后一段后本轮结束');
@@ -142,15 +145,20 @@ test('段内推进与空段：点对一段推进下一段，某段超时按 time
   assert.equal(m.player.timeouts, 1);
 });
 
-test('硬上限：超过 45s 未越线时按位移判定收官（§6.3 / §2.3）', () => {
+test('普通对战超过 45 秒仍继续，不受闯关时长上限影响', () => {
   const rand = createRng(5);
-  let m = beginPlaying(createMatch({ difficulty: 'normal' }));
+  let m = beginPlaying(createMatch({ difficulty: 'normal', rankId: 'bronze' }));
   m = nextRound(m, rand);
-  // 用超大 dt 模拟超时（正常玩法下由场景逐帧累加）
-  m = submit(m, curTarget(m), GAME_HARD_LIMIT_MS, rand);
-  assert.equal(m.phase, 'over');
-  assert.ok(['win', 'lose', 'draw'].includes(m.result));
-  assert.equal(m.round.done, true, '截断收官时本轮也要记为结束，保证服务端一致性口径成立');
+  m = {
+    ...m,
+    elapsedMs: 50000,
+    player: { ...m.player, energy: 0 },
+    ghost: { ...m.ghost, state: { ...m.ghost.state, energy: 0 } },
+  };
+  const continued = submit(m, null, 100, rand);
+  assert.equal(continued.elapsedMs, 50100);
+  assert.equal(continued.phase, 'playing');
+  assert.equal(continued.result, null);
 });
 
 test('状态推进不可变：submit 返回新对象且不修改入参', () => {
@@ -176,6 +184,7 @@ test('判定分档：窗口前段点中记「完美」（能量更高），后�
   const rand = createRng(21);
   let m = beginPlaying(createMatch({ difficulty: 'normal' }));
   m = nextRound(m, rand);
+  m = { ...m, elapsedMs: 90000 };
   const w = m.round.windowMs;
 
   // 完美：在窗口前 50% 内点中
@@ -240,10 +249,10 @@ test('summary：结算摘要字段口径（命中率 = 命中段数 / 总判定�
   const settled = s.hits + s.misses + s.timeouts;
   assert.equal(s.accuracy, settled === 0 ? 0 : s.hits / settled, '命中率 = 命中段数 / 总判定段数');
   assert.ok(s.hits >= Math.max(0, s.rounds - s.misses - s.timeouts), '未以失误/空轮结束的轮次至少贡献 1 次命中');
-  assert.ok(s.hits <= s.rounds * SEQUENCE_LENGTH, '一轮最多贡献 N 次命中');
+  assert.ok(s.hits <= s.rounds * CLASSIC_MODE.sequenceLength.max, '一轮最多贡献动态序列上限次命中');
   assert.equal(s.netEnergy, s.myEnergy - s.oppEnergy);
   assert.equal(s.displacementPx, done.px);
-  assert.ok(s.durationMs > 0 && s.durationMs <= GAME_HARD_LIMIT_MS);
+  assert.ok(s.durationMs > 0);
 });
 
 test('shouldFallbackToAI：匹配上限 3s 后进入 AI 对局，不阻塞玩家（§4.1）', () => {
